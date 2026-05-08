@@ -1,0 +1,41 @@
+# docker-compose.test.yml — spins up FinAlly with LLM_MOCK=true for E2E tests.
+#
+# Usage:
+#   docker compose -f test/docker-compose.test.yml up --build -d
+#   (run Playwright on the host: cd test && npm test)
+#   docker compose -f test/docker-compose.test.yml down -v
+#
+# We deliberately keep Playwright on the host rather than in a sidecar container —
+# faster iteration, no nested networking, and matches how DevOps runs the smoke
+# test in #14. See test/README.md.
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: finally:test
+    container_name: finally-e2e-app
+    environment:
+      # Mandatory for tests: deterministic mock LLM responses (§9 mock dispatch table).
+      LLM_MOCK: "true"
+      # Anthropic key not used in mock mode, but the backend still loads .env;
+      # provide a placeholder so import-time validation (if any) doesn't trip.
+      ANTHROPIC_API_KEY: "test-mock-key"
+      # Empty Massive key forces the simulator path — required for ticker-allowlist tests.
+      MASSIVE_API_KEY: ""
+    ports:
+      - "8000:8000"
+    volumes:
+      # Ephemeral SQLite per test run — bind to a tmpfs-style anonymous volume so
+      # the next `up` starts from a clean seed without requiring `down -v`.
+      - finally-e2e-db:/app/db
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=2).status == 200 else 1)\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  finally-e2e-db:

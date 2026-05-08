@@ -6,12 +6,13 @@ Built entirely by coding agents as a capstone project for an agentic AI coding c
 
 ## Features
 
-- **Live price streaming** via SSE with green/red flash animations
-- **Simulated portfolio** — $10k virtual cash, market orders, instant fills
-- **Portfolio visualizations** — heatmap (treemap), P&L chart, positions table
-- **AI chat assistant** — analyzes holdings, suggests and auto-executes trades
-- **Watchlist management** — track tickers manually or via AI
+- **Live price streaming** via SSE with green/red flash animations and 15s heartbeats
+- **Simulated portfolio** — $10k virtual cash, market orders, instant fills, fractional shares
+- **Portfolio visualizations** — weight-sorted holdings list, live positions table, P&L chart with 1h/1d/1w/1m/all ranges
+- **AI chat assistant** — analyzes holdings, suggests and auto-executes trades via natural language
+- **Watchlist management** — 25-ticker cap, add/remove via UI or AI
 - **Dark terminal aesthetic** — Bloomberg-inspired, data-dense layout
+- **Connection-aware** — live status indicator, market-closed badge, SSE auto-reconnect
 
 ## Architecture
 
@@ -25,20 +26,57 @@ Single Docker container serving everything on port 8000:
 
 ## Quick Start
 
+Prerequisites: [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose v2 on Linux).
+
 ```bash
-# Clone and configure
+# 1. Configure
 cp .env.example .env
-# Add your ANTHROPIC_API_KEY to .env
-
-# Run with Docker (macOS/Linux)
-docker build -t finally .
-docker run -v "$(pwd)/db:/app/db" -p 8000:8000 --env-file .env finally
-
-# Windows PowerShell
-docker run -v "${PWD}/db:/app/db" -p 8000:8000 --env-file .env finally
-
-# Open http://localhost:8000
+# Edit .env and add your ANTHROPIC_API_KEY
 ```
+
+### macOS / Linux
+
+```bash
+./scripts/start_mac.sh           # builds image if needed, runs container
+./scripts/start_mac.sh --build   # force rebuild after code changes
+./scripts/start_mac.sh --logs    # follow logs after start
+./scripts/stop_mac.sh            # stop + remove container (db preserved)
+```
+
+### Windows (PowerShell)
+
+```powershell
+.\scripts\start_windows.ps1            # builds image if needed, runs container
+.\scripts\start_windows.ps1 -Build     # force rebuild after code changes
+.\scripts\start_windows.ps1 -Logs      # follow logs after start
+.\scripts\stop_windows.ps1             # stop + remove container (db preserved)
+```
+
+Then open http://localhost:8000.
+
+### Or use docker compose directly
+
+```bash
+docker compose up --build -d
+docker compose logs -f
+docker compose down
+```
+
+### Persistence
+
+The SQLite database lives at `db/finally.db` on the host (bind-mounted into the
+container). Stopping the container preserves your portfolio; delete that file
+for a clean slate.
+
+### `.env` format gotchas
+
+Docker's `--env-file` parser is unforgiving — the start scripts validate
+your `.env` and bail with a precise fix message before docker even runs.
+Three traps to know about:
+
+- **No quotes** — write `ANTHROPIC_API_KEY=sk-ant-...`, not `="sk-ant-..."`. Docker keeps the literal quote chars in the value, which causes a `401 invalid x-api-key` from Anthropic.
+- **No spaces around `=`** — `KEY=value`, not `KEY = value`. Docker rejects the file outright.
+- **LF line endings only** — Windows CRLF endings put a trailing `\r` in every value, which silently breaks them. In VS Code, click `CRLF` in the bottom-right status bar and switch to `LF`. Or run `dos2unix .env` from Git Bash.
 
 ## Environment Variables
 
@@ -50,17 +88,35 @@ docker run -v "${PWD}/db:/app/db" -p 8000:8000 --env-file .env finally
 
 ## Project Status
 
+**All components complete.** Built end-to-end by a coordinated agent team (database, backend, LLM, frontend, devops, integration tester).
+
 | Component | Status |
 |---|---|
-| Project specification (`planning/PLAN.md`) | Complete — all open questions resolved |
+| Project specification (`planning/PLAN.md`) | Complete |
 | Market data subsystem (simulator + Massive client + cache) | Complete (see `planning/MARKET_DATA_SUMMARY.md`) |
-| SSE streaming (`/api/stream/prices`) | Pending |
-| Portfolio API (trade/positions/history) | Pending |
-| Watchlist API | Pending |
-| LLM chat (`/api/chat`) with auto-execution | Pending |
-| Frontend (Next.js trading terminal UI) | Pending |
-| Dockerfile + start/stop scripts | Pending |
-| E2E test suite (Playwright) | Pending |
+| SSE streaming with `market_status` + 15s heartbeats | Complete |
+| Database layer (SQLite, lifespan init, repositories, snapshot writer) | Complete |
+| Portfolio API (trade/positions/history) with idempotent trades | Complete |
+| Watchlist API with auto-add on trade | Complete |
+| LLM chat (`/api/chat`) with auto-execution + deterministic mock mode | Complete |
+| Frontend (Next.js trading terminal UI) | Complete |
+| Dockerfile (multi-stage) + start/stop scripts (mac + Windows) | Complete |
+| E2E test suite (Playwright) — 15 scenarios | Complete |
+
+### Test totals
+
+- Backend: 294/294 unit tests passing (DB, market, API, LLM)
+- Frontend: 66/66 component tests passing
+- E2E: 15/15 scenarios passing in ~50s on a clean container
+
+### Run locally
+
+```bash
+cp .env.example .env
+# Add ANTHROPIC_API_KEY (or set LLM_MOCK=true to skip)
+./scripts/start_mac.sh      # or .\scripts\start_windows.ps1
+# Open http://localhost:8000
+```
 
 ## Project Structure
 

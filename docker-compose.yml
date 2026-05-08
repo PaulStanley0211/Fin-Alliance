@@ -1,0 +1,33 @@
+# Convenience wrapper for `docker compose up` / `docker compose down`.
+# The start scripts in scripts/ are the supported entry points for end users —
+# this file exists for developers who prefer compose semantics.
+#
+# Usage:
+#   docker compose up --build -d       # start
+#   docker compose logs -f              # tail logs
+#   docker compose down                 # stop (preserves db/ on host)
+
+services:
+  finally:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: finally:latest
+    container_name: finally
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Bind mount: db/finally.db on the host survives `down` and is directly
+      # inspectable. Use `docker compose down -v` only if you want a fresh DB
+      # *and* you've also deleted db/finally.db on the host (the bind mount is
+      # not a named volume, so `-v` does nothing for it).
+      - ./db:/app/db
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=2).status == 200 else 1)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped

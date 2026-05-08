@@ -1,0 +1,193 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-display: "Fraunces", "Source Serif Pro", Georgia, serif;
+    --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+    /* Color tokens — also exposed as CSS vars for chart libraries that don't use Tailwind */
+    --bg-0: #0d1117;
+    --bg-1: #11161f;
+    --bg-2: #161c27;
+    --bg-3: #1a1a2e;
+    --bg-4: #222a38;
+    --line: #222a38;
+    --line-soft: #1b2230;
+    --line-strong: #2d3a4e;
+    --ink-0: #e6edf3;
+    --ink-1: #a8b3c1;
+    --ink-2: #6e7a8a;
+    --ink-3: #4a5363;
+    --accent: #ecad0a;
+    --primary: #209dd7;
+    --secondary: #753991;
+    --up: #26d086;
+    --down: #f0506e;
+  }
+
+  html,
+  body {
+    height: 100%;
+    background-color: var(--bg-0);
+    color: var(--ink-0);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11"; /* refined glyph variants when font supports them */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    /* Ambient depth — a faint vignette + grid behind everything, never pure black */
+    background-image:
+      radial-gradient(ellipse 80% 60% at 50% -10%, rgba(32, 157, 215, 0.08), transparent 70%),
+      radial-gradient(ellipse 60% 40% at 90% 100%, rgba(117, 57, 145, 0.06), transparent 70%),
+      linear-gradient(to right, rgba(34, 42, 56, 0.18) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(34, 42, 56, 0.18) 1px, transparent 1px);
+    background-size:
+      auto,
+      auto,
+      48px 48px,
+      48px 48px;
+    background-attachment: fixed;
+  }
+
+  /* Tabular numbers everywhere data is shown */
+  .tabular,
+  table,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background-color: rgba(236, 173, 10, 0.35);
+    color: var(--ink-0);
+  }
+
+  /* Refined scrollbar — visible but restrained */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(74, 83, 99, 0.4);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(74, 83, 99, 0.7);
+  }
+}
+
+@layer components {
+  /* Panel chrome — used everywhere to give the terminal-grid feel */
+  .panel {
+    @apply bg-bg-1/80 border border-line-soft rounded-panel;
+    backdrop-filter: blur(6px);
+  }
+
+  .panel-raised {
+    @apply bg-bg-2 border border-line rounded-panel;
+  }
+
+  /* Eyebrow label above panels — uppercase, wide-tracked, mono */
+  .eyebrow {
+    @apply font-mono text-2xs uppercase text-ink-2;
+    letter-spacing: 0.18em;
+  }
+
+  /* Section divider — used between header strip and grid */
+  .hairline {
+    @apply h-px w-full bg-line-soft;
+  }
+
+  /* Tabular data cell baseline */
+  .data-cell {
+    @apply font-mono text-tabular text-ink-0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 font-mono text-xs uppercase tracking-terminal
+           border rounded-sharp transition-colors duration-150 select-none;
+    letter-spacing: 0.08em;
+  }
+  .btn-primary {
+    @apply btn bg-primary/10 border-primary/40 text-primary hover:bg-primary/20 hover:border-primary;
+  }
+  .btn-buy {
+    @apply btn bg-up/10 border-up/40 text-up hover:bg-up/20 hover:border-up disabled:opacity-40 disabled:hover:bg-up/10;
+  }
+  .btn-sell {
+    @apply btn bg-down/10 border-down/40 text-down hover:bg-down/20 hover:border-down disabled:opacity-40 disabled:hover:bg-down/10;
+  }
+  .btn-submit {
+    @apply btn bg-secondary/15 border-secondary/50 text-secondary-glow hover:bg-secondary/25 hover:border-secondary;
+  }
+  .btn-ghost {
+    @apply btn border-line hover:border-line-strong text-ink-1 hover:text-ink-0;
+  }
+
+  /* Inputs */
+  .input {
+    @apply font-mono text-sm bg-bg-0 border border-line rounded-sharp px-2.5 py-1.5
+           text-ink-0 placeholder:text-ink-3 outline-none
+           focus:border-primary/60 focus:ring-1 focus:ring-primary/30 transition-colors;
+  }
+
+  /* Status dot */
+  .status-dot {
+    @apply inline-block w-2 h-2 rounded-full;
+  }
+}
+
+@layer utilities {
+  /* Price flash classes — applied transiently when a price ticks. Animation auto-removes. */
+  .flash-up {
+    animation: flash-up 500ms ease-out;
+  }
+  .flash-down {
+    animation: flash-down 500ms ease-out;
+  }
+
+  /* When market is closed — globally suppress flashes via a body-level class */
+  .market-closed .flash-up,
+  .market-closed .flash-down {
+    animation: none !important;
+  }
+
+  .text-up {
+    color: var(--up);
+  }
+  .text-down {
+    color: var(--down);
+  }
+  .text-flat {
+    color: var(--ink-2);
+  }
+
+  /* Diagonal stripe pattern for "closed" state overlays */
+  .stripe-closed {
+    background-image: repeating-linear-gradient(
+      45deg,
+      rgba(110, 122, 138, 0.06) 0,
+      rgba(110, 122, 138, 0.06) 6px,
+      transparent 6px,
+      transparent 12px
+    );
+  }
+
+  .glow-primary {
+    box-shadow: 0 0 0 1px rgba(32, 157, 215, 0.4), 0 0 18px rgba(32, 157, 215, 0.25);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 0 1px rgba(236, 173, 10, 0.4), 0 0 18px rgba(236, 173, 10, 0.2);
+  }
+}
