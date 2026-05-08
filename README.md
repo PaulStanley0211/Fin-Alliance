@@ -127,8 +127,33 @@ finally/
 ├── planning/    # Project documentation and agent contracts
 ├── test/        # Playwright E2E tests
 ├── db/          # SQLite volume mount (runtime)
-└── scripts/     # Start/stop helpers
+├── scripts/     # Start/stop helpers
+└── .claude/
+    └── agents/  # Six role-specific agent definitions
 ```
+
+## How this was built
+
+FinAlly was implemented by a six-member coordinated agent team rather than
+a single coding session. Each role was a separate Claude Code subagent
+defined under [`.claude/agents/`](.claude/agents/), spawned into a shared
+team with a dependency-graphed task list:
+
+| Agent | Scope |
+|---|---|
+| `database-engineer` | SQLite schema, lifespan init, repositories, snapshot writer |
+| `backend-engineer` | FastAPI app, REST endpoints, SSE wiring, static-file serving |
+| `llm-engineer` | LiteLLM/Anthropic client, mock mode, `/api/chat`, action executor |
+| `frontend-engineer` | Next.js app, components, Tailwind theming, SSE store, charts |
+| `devops-engineer` | Multi-stage Dockerfile, start/stop scripts, `.env` validation |
+| `integration-tester` | Playwright E2E suite, defect routing, final readiness report |
+
+Teammates worked in parallel where the dependency graph allowed and
+coordinated peer-to-peer (e.g. backend ↔ devops on the schema-path bind
+mount; frontend ↔ integration-tester on `data-testid` contracts). Defects
+surfaced by the E2E suite were filed as bug tasks back to the suspected
+owner and re-verified after the fix. The full project specification
+(`planning/PLAN.md`) is the contract every agent reads.
 
 ## License
 
