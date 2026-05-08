@@ -20,7 +20,7 @@ Single Docker container serving everything on port 8000:
 - **Frontend**: Next.js (static export) with TypeScript and Tailwind CSS
 - **Backend**: FastAPI (Python/uv) with SSE streaming
 - **Database**: SQLite with lazy initialization
-- **AI**: LiteLLM → OpenRouter (Cerebras inference) with structured outputs
+- **AI**: LiteLLM → Anthropic (Claude Haiku 4.5) with structured outputs
 - **Market data**: Built-in GBM simulator (default) or Massive API (optional)
 
 ## Quick Start
@@ -28,11 +28,14 @@ Single Docker container serving everything on port 8000:
 ```bash
 # Clone and configure
 cp .env.example .env
-# Add your OPENROUTER_API_KEY to .env
+# Add your ANTHROPIC_API_KEY to .env
 
-# Run with Docker
+# Run with Docker (macOS/Linux)
 docker build -t finally .
-docker run -v finally-data:/app/db -p 8000:8000 --env-file .env finally
+docker run -v "$(pwd)/db:/app/db" -p 8000:8000 --env-file .env finally
+
+# Windows PowerShell
+docker run -v "${PWD}/db:/app/db" -p 8000:8000 --env-file .env finally
 
 # Open http://localhost:8000
 ```
@@ -41,9 +44,23 @@ docker run -v finally-data:/app/db -p 8000:8000 --env-file .env finally
 
 | Variable | Required | Description |
 |---|---|---|
-| `OPENROUTER_API_KEY` | Yes | OpenRouter API key for AI chat |
+| `ANTHROPIC_API_KEY` | Yes | Anthropic API key for Claude-powered AI chat |
 | `MASSIVE_API_KEY` | No | Massive (Polygon.io) key for real market data; omit to use simulator |
 | `LLM_MOCK` | No | Set `true` for deterministic mock LLM responses (testing) |
+
+## Project Status
+
+| Component | Status |
+|---|---|
+| Project specification (`planning/PLAN.md`) | Complete — all open questions resolved |
+| Market data subsystem (simulator + Massive client + cache) | Complete (see `planning/MARKET_DATA_SUMMARY.md`) |
+| SSE streaming (`/api/stream/prices`) | Pending |
+| Portfolio API (trade/positions/history) | Pending |
+| Watchlist API | Pending |
+| LLM chat (`/api/chat`) with auto-execution | Pending |
+| Frontend (Next.js trading terminal UI) | Pending |
+| Dockerfile + start/stop scripts | Pending |
+| E2E test suite (Playwright) | Pending |
 
 ## Project Structure
 
