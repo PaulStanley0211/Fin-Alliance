@@ -101,13 +101,13 @@ Three traps to know about:
 | LLM chat (`/api/chat`) with auto-execution + deterministic mock mode | Complete |
 | Frontend (Next.js trading terminal UI) | Complete |
 | Dockerfile (multi-stage) + start/stop scripts (mac + Windows) | Complete |
-| E2E test suite (Playwright) — 15 scenarios | Complete |
+| E2E test suite (Playwright) — 16 scenarios | Complete |
 
 ### Test totals
 
 - Backend: 294/294 unit tests passing (DB, market, API, LLM)
 - Frontend: 66/66 component tests passing
-- E2E: 15/15 scenarios passing in ~50s on a clean container
+- E2E: 16/16 scenarios passing in ~60s on a clean container, no flake on three consecutive clean runs
 
 ### Run locally
 
