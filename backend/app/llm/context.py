@@ -20,7 +20,10 @@ from app.market import PriceCache
 from .schemas import PortfolioContext, PortfolioPosition
 
 
-def build_portfolio_context(price_cache: PriceCache | None) -> PortfolioContext:
+def build_portfolio_context(
+    price_cache: PriceCache | None,
+    user_id: str | None = None,
+) -> PortfolioContext:
     """Snapshot the user's portfolio state for the LLM system prompt.
 
     Cash + positions are read from the DB. Live prices come from the price
@@ -28,11 +31,17 @@ def build_portfolio_context(price_cache: PriceCache | None) -> PortfolioContext:
     `cash + Σ(quantity × current_price)` using the avg cost as a fallback
     when a position has no streamed price yet, matching the portfolio
     endpoint's behavior.
+
+    ``user_id`` is the authenticated user's id; defaults to the legacy
+    "default" via the repository default arg, which is what tests rely on.
     """
+    from app.db.repositories import DEFAULT_USER_ID
+
+    uid = user_id or DEFAULT_USER_ID
     with connect() as conn:
-        user = get_user(conn)
+        user = get_user(conn, uid)
         cash = float(user["cash_balance"]) if user else 0.0
-        position_rows = list_positions(conn)
+        position_rows = list_positions(conn, user_id=uid)
 
     positions: list[PortfolioPosition] = []
     market_total = 0.0

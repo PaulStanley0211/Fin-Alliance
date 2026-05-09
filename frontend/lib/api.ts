@@ -7,6 +7,8 @@
 
 import type {
   ApiErrorBody,
+  AuthCredentialsBody,
+  AuthUserView,
   ChatRequestBody,
   ChatStreamCallbacks,
   ChatStreamDone,
@@ -43,6 +45,17 @@ interface FetchOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Hook the auth store can register so a 401 from any non-auth endpoint
+ * resets the in-memory user. Imported lazily inside the request to avoid
+ * a static circular import (auth.ts also imports from this module).
+ */
+let onUnauthorizedHook: (() => void) | null = null;
+
+export function registerUnauthorizedHandler(fn: (() => void) | null): void {
+  onUnauthorizedHook = fn;
+}
+
 async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const { method = "GET", body, signal } = opts;
 
@@ -63,6 +76,9 @@ async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const parsed: unknown = text ? safeJson(text) : null;
 
   if (!res.ok) {
+    if (res.status === 401 && !path.startsWith("/api/auth/")) {
+      onUnauthorizedHook?.();
+    }
     const envelope = isErrorEnvelope(parsed)
       ? parsed
       : { error: "unknown_error", message: text || res.statusText };
@@ -297,6 +313,32 @@ export const api = {
 
   getHealth(signal?: AbortSignal): Promise<HealthResponse> {
     return request<HealthResponse>("/api/health", { signal });
+  },
+
+  // ---- Auth --------------------------------------------------------------
+
+  authMe(signal?: AbortSignal): Promise<AuthUserView> {
+    return request<AuthUserView>("/api/auth/me", { signal });
+  },
+
+  authSignup(body: AuthCredentialsBody, signal?: AbortSignal): Promise<AuthUserView> {
+    return request<AuthUserView>("/api/auth/signup", {
+      method: "POST",
+      body,
+      signal,
+    });
+  },
+
+  authLogin(body: AuthCredentialsBody, signal?: AbortSignal): Promise<AuthUserView> {
+    return request<AuthUserView>("/api/auth/login", {
+      method: "POST",
+      body,
+      signal,
+    });
+  },
+
+  authLogout(signal?: AbortSignal): Promise<void> {
+    return request<void>("/api/auth/logout", { method: "POST", signal });
   },
 };
 

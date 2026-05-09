@@ -15,9 +15,10 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.api.errors import APIError
+from app.auth import current_user
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ router = APIRouter()
 async def get_history(
     ticker: str,
     range: str = Query("1d", description="One of 1d, 1w, 1m, 3m, 6m, 1y"),
+    _auth_user: dict = Depends(current_user),
 ) -> dict[str, Any]:
     """Return historical close prices for `ticker` over the requested range.
 

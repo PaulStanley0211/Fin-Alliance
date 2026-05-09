@@ -41,6 +41,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.auth import current_user
 from app.db import append_chat_message, recent_chat_messages
 from app.db.connection import connect
 from app.state import AppState, get_state
@@ -71,9 +72,10 @@ class ChatRequest(BaseModel):
 async def post_chat(
     body: ChatRequest,
     state: AppState = Depends(get_state),
+    auth_user: dict = Depends(current_user),
 ) -> StreamingResponse:
     return StreamingResponse(
-        _chat_event_stream(body.message, state),
+        _chat_event_stream(body.message, state, user_id=auth_user["id"]),
         media_type="text/event-stream",
         # Disable proxy buffering so chunks don't pile up in front of the client.
         headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
@@ -88,6 +90,8 @@ async def post_chat(
 async def _chat_event_stream(
     user_message: str,
     state: AppState,
+    *,
+    user_id: str,
 ) -> AsyncIterator[bytes]:
     """Yield raw SSE event bytes covering one chat turn.
 
@@ -96,15 +100,15 @@ async def _chat_event_stream(
     """
     # Step 1 — load history (cap 20 most recent, oldest-first).
     with connect() as conn:
-        history = recent_chat_messages(conn, limit=20)
+        history = recent_chat_messages(conn, limit=20, user_id=user_id)
 
     # Step 2 — snapshot portfolio state for grounding.
-    ctx = build_portfolio_context(state.price_cache)
+    ctx = build_portfolio_context(state.price_cache, user_id=user_id)
 
     # Step 3 — persist the user message *before* the model call. If the call
     # explodes mid-flight, the user's turn is still in the history.
     with connect() as conn:
-        append_chat_message(conn, role="user", content=user_message)
+        append_chat_message(conn, role="user", content=user_message, user_id=user_id)
 
     # Step 4 — drive the streaming LLM call.
     final_payload: LLMResponse | None = None
@@ -142,6 +146,7 @@ async def _chat_event_stream(
                 role="assistant",
                 content=envelope.message,
                 actions=envelope.model_dump(exclude={"message"}),
+                user_id=user_id,
             )
         return
 
@@ -156,7 +161,9 @@ async def _chat_event_stream(
         )
         return
 
-    executed_trades, executed_watchlist = await execute_actions(final_payload, state)
+    executed_trades, executed_watchlist = await execute_actions(
+        final_payload, state, user_id=user_id
+    )
 
     envelope = ChatResponseEnvelope(
         message=final_payload.message,
@@ -172,6 +179,7 @@ async def _chat_event_stream(
             role="assistant",
             content=envelope.message,
             actions=envelope.model_dump(exclude={"message"}),
+            user_id=user_id,
         )
 
     yield _sse_event(

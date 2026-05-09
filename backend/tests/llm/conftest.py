@@ -55,8 +55,28 @@ def app(db_file: Path, static_dir: Path) -> FastAPI:  # noqa: ARG001
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
+    """TestClient that runs the lifespan AND signs up a default test user.
+
+    Chat tests run as the authenticated test user so the chat endpoint's
+    `current_user` dependency resolves and the per-user persistence /
+    history queries scope to a known account.
+    """
     with TestClient(app) as c:
+        resp = c.post(
+            "/api/auth/signup",
+            json={"username": "testuser", "password": "testpass123"},
+        )
+        assert resp.status_code == 201, f"test signup failed: {resp.text}"
         yield c
+
+
+@pytest.fixture
+def authed_user_id(client: TestClient) -> str:
+    """Resolve the test user's id from the session — useful when asserting
+    against per-user repository rows in the DB."""
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200, me.text
+    return me.json()["id"]
 
 
 @pytest.fixture

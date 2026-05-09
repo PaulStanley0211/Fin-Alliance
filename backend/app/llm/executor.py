@@ -52,8 +52,22 @@ def _map_api_error(exc: api_errors.APIError) -> ExecutionError:
     return _ERROR_CODE_MAP.get(exc.code, "internal_error")
 
 
-async def _execute_one_trade(trade: TradeRequest, state: AppState) -> ExecutedTrade:
-    """Run one LLM-emitted trade through the backend's trade endpoint."""
+DEFAULT_EXEC_USER_ID = "default"
+
+
+async def _execute_one_trade(
+    trade: TradeRequest,
+    state: AppState,
+    *,
+    user_id: str = DEFAULT_EXEC_USER_ID,
+) -> ExecutedTrade:
+    """Run one LLM-emitted trade through the backend's trade endpoint.
+
+    We invoke ``portfolio_api.post_trade`` directly rather than through HTTP
+    so error codes propagate as ``APIError`` exceptions. FastAPI's ``Depends``
+    isn't running here, so we pass the auth_user dict (the only field
+    ``post_trade`` reads is ``id``) explicitly.
+    """
     body = api_schemas.TradeRequest(
         ticker=trade.ticker,
         side=trade.side,
@@ -62,7 +76,7 @@ async def _execute_one_trade(trade: TradeRequest, state: AppState) -> ExecutedTr
     )
 
     try:
-        result = await portfolio_api.post_trade(body, state)
+        result = await portfolio_api.post_trade(body, state, {"id": user_id})
     except api_errors.APIError as exc:
         return ExecutedTrade(
             ticker=trade.ticker,
@@ -111,18 +125,22 @@ def _reject_watchlist_change(change: WatchlistChange) -> ExecutedWatchlistChange
 async def execute_actions(
     response: LLMResponse,
     state: AppState,
+    *,
+    user_id: str = DEFAULT_EXEC_USER_ID,
 ) -> tuple[list[ExecutedTrade], list[ExecutedWatchlistChange]]:
     """Execute every action in `response`, preserving emission order.
 
-    Trades run through the live trade endpoint. Watchlist changes are
-    short-circuited with `watchlist_disabled` (spec §6 — watchlist removed).
+    Trades run through the live trade endpoint scoped to ``user_id``.
+    Watchlist changes are short-circuited with ``watchlist_disabled`` (spec
+    §6 — watchlist removed).
 
     Each trade is independent — one rejection does NOT abort the others. The
-    returned lists have the same length and order as `response.trades` and
-    `response.watchlist_changes` respectively.
+    returned lists have the same length and order as ``response.trades`` and
+    ``response.watchlist_changes`` respectively.
     """
     executed_trades: list[ExecutedTrade] = [
-        await _execute_one_trade(trade, state) for trade in response.trades
+        await _execute_one_trade(trade, state, user_id=user_id)
+        for trade in response.trades
     ]
     executed_watchlist: list[ExecutedWatchlistChange] = [
         _reject_watchlist_change(change) for change in response.watchlist_changes

@@ -23,7 +23,7 @@ def test_initial_context_matches_seed(state) -> None:
 
 
 def test_context_picks_up_streamed_prices_for_positions(
-    state, client, seed_price
+    state, client, seed_price, authed_user_id
 ) -> None:  # noqa: ARG001
     """Streamed prices flow through positions (the watchlist field is gone)."""
     seed_price("AAPL", 100.0)
@@ -34,12 +34,12 @@ def test_context_picks_up_streamed_prices_for_positions(
     assert resp.status_code == 200, resp.text
     seed_price("AAPL", 250.0)
 
-    ctx = build_portfolio_context(state.price_cache)
+    ctx = build_portfolio_context(state.price_cache, user_id=authed_user_id)
     aapl = next(p for p in ctx.positions if p.ticker == "AAPL")
     assert aapl.current_price == 250.0
 
 
-def test_context_after_buy_reflects_position(client, seed_price) -> None:
+def test_context_after_buy_reflects_position(client, seed_price, authed_user_id) -> None:
     seed_price("AAPL", 100.0)
     resp = client.post(
         "/api/portfolio/trade",
@@ -47,7 +47,7 @@ def test_context_after_buy_reflects_position(client, seed_price) -> None:
     )
     assert resp.status_code == 200, resp.text
 
-    ctx = build_portfolio_context(get_state().price_cache)
+    ctx = build_portfolio_context(get_state().price_cache, user_id=authed_user_id)
     assert ctx.cash_balance == 9500.0
     assert len(ctx.positions) == 1
     aapl = ctx.positions[0]
@@ -61,7 +61,7 @@ def test_context_after_buy_reflects_position(client, seed_price) -> None:
     assert ctx.total_value == 10000.0
 
 
-def test_context_uses_avg_cost_when_price_missing(client) -> None:
+def test_context_uses_avg_cost_when_price_missing(client, authed_user_id) -> None:
     # Buy a position, then drop the cached price — simulate a fresh cache
     # where the ticker hasn't ticked since restart. Context should fall
     # back to avg_cost so the position still renders.
@@ -79,20 +79,20 @@ def test_context_uses_avg_cost_when_price_missing(client) -> None:
 
     cache.remove("AAPL")
 
-    ctx = build_portfolio_context(cache)
+    ctx = build_portfolio_context(cache, user_id=authed_user_id)
     aapl = next(p for p in ctx.positions if p.ticker == "AAPL")
     # Falls back to avg_cost (= 80), so unrealized P&L is 0.
     assert aapl.current_price == 80.0
     assert aapl.unrealized_pnl == 0.0
 
 
-def test_context_unrealized_pnl_calculation(client, seed_price) -> None:
+def test_context_unrealized_pnl_calculation(client, seed_price, authed_user_id) -> None:
     seed_price("AAPL", 100.0)
     client.post("/api/portfolio/trade", json={"ticker": "AAPL", "quantity": 10, "side": "buy"})
     # Price moves up
     seed_price("AAPL", 120.0)
 
-    ctx = build_portfolio_context(get_state().price_cache)
+    ctx = build_portfolio_context(get_state().price_cache, user_id=authed_user_id)
     aapl = ctx.positions[0]
     assert aapl.avg_cost == 100.0
     assert aapl.current_price == 120.0

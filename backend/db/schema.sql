@@ -1,6 +1,19 @@
 -- FinAlly schema. See planning/PLAN.md §7.
--- All tables include user_id (default "default") to allow future multi-user
--- without schema migration. UUIDs as TEXT, timestamps as ISO UTC TEXT.
+-- All tables include user_id (UUID TEXT) to support multi-user. The legacy
+-- "default" user_id is preserved as orphan data on existing databases for
+-- backward compatibility but new accounts get fresh UUIDs.
+-- UUIDs as TEXT, timestamps as ISO UTC TEXT.
+
+-- Auth: a row per registered account. Created on POST /api/auth/signup.
+-- The `id` here is what the rest of the schema uses as `user_id`.
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
 
 CREATE TABLE IF NOT EXISTS users_profile (
     id TEXT PRIMARY KEY,

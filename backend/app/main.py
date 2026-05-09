@@ -26,7 +26,9 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
+from app.auth import SESSION_MAX_AGE_SECONDS
 from app.db import (
     SnapshotWriter,
     init_db,
@@ -137,6 +139,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    _install_session_middleware(app)
     register_exception_handlers(app)
 
     # Build the shared PriceCache up-front so the SSE router (factory takes
@@ -163,6 +166,43 @@ def create_app() -> FastAPI:
     return app
 
 
+def _install_session_middleware(app: FastAPI) -> None:
+    """Mount Starlette's SessionMiddleware with a stable secret.
+
+    Resolution order for the secret:
+    1. ``SESSION_SECRET_KEY`` env var (production / shared key).
+    2. A random key generated at process start (dev fallback) — logs a
+       warning so operators know sessions won't survive a restart.
+
+    Cookie attributes:
+    - ``http_only`` (Starlette default) so JS can't read the cookie.
+    - ``same_site=lax`` so navigations work but cross-site POSTs don't.
+    - ``max_age=SESSION_MAX_AGE_SECONDS`` (24h). The fixed-window check in
+      ``app.auth.sessions`` re-validates every request so a refreshed
+      cookie can't extend the absolute lifetime.
+    """
+    import os
+    import secrets
+
+    secret = os.environ.get("SESSION_SECRET_KEY", "").strip()
+    if not secret:
+        secret = secrets.token_urlsafe(48)
+        logger.warning(
+            "SESSION_SECRET_KEY not set; generated an ephemeral key. "
+            "Sessions will be invalidated on every restart. "
+            "Set SESSION_SECRET_KEY in .env for stable sessions."
+        )
+
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=secret,
+        session_cookie="finally_session",
+        max_age=SESSION_MAX_AGE_SECONDS,
+        same_site="lax",
+        https_only=False,
+    )
+
+
 def _mount_rest_routers(app: FastAPI) -> None:
     """Include the per-resource API routers, tolerating absent modules.
 
@@ -172,6 +212,7 @@ def _mount_rest_routers(app: FastAPI) -> None:
     """
     for module_name, attr in (
         ("app.api.health", "router"),
+        ("app.api.auth", "router"),
         ("app.api.portfolio", "router"),
         ("app.api.sectors", "router"),
         ("app.api.history", "router"),

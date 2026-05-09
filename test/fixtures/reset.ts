@@ -1,33 +1,21 @@
 import type { APIRequestContext } from "@playwright/test";
 
 /**
- * Resets the backend to a known-clean state between tests by selling every
- * open position back to flat (reuses /api/portfolio/trade so cost_basis math
- * runs through the real path, not a backdoor).
+ * Backend state reset between tests.
  *
- * Cash will not return to *exactly* $10,000 because sell prices drift on the
- * GBM simulator — that's fine; tests assert deltas, not absolutes (except
- * the fresh-start scenario, which is the only one that runs against a brand
- * new volume).
+ * Historical purpose: when the suite ran against a single shared `default`
+ * user, this helper sold every open position back to flat so the next test
+ * started clean.
  *
- * The legacy watchlist trim is gone: per the redesign spec the dynamic
- * watchlist concept was removed in favor of the fixed 50-ticker sector
- * taxonomy, so there is no per-test ticker state to reset.
+ * Now that auth + multi-user is in place, every test signs up its own
+ * unique user (see `fixtures/app.ts → testUsername`), so each test
+ * already starts on a brand new portfolio with zero positions and $10k
+ * cash. There's nothing to reset.
+ *
+ * The function is kept as a no-op so existing call sites in
+ * `chat.spec.ts`, `trading.spec.ts`, etc. don't have to be updated. Feel
+ * free to drop the calls when touching those files for other reasons.
  */
-export async function resetBackendState(request: APIRequestContext): Promise<void> {
-  const portfolioRes = await request.get("/api/portfolio");
-  if (portfolioRes.ok()) {
-    const portfolio = await portfolioRes.json();
-    for (const pos of portfolio.positions ?? []) {
-      if (pos.quantity > 0) {
-        await request.post("/api/portfolio/trade", {
-          data: {
-            ticker: pos.ticker,
-            quantity: pos.quantity,
-            side: "sell",
-          },
-        });
-      }
-    }
-  }
+export async function resetBackendState(_request: APIRequestContext): Promise<void> {
+  // Per-test user isolation handles state cleanup; nothing to do.
 }

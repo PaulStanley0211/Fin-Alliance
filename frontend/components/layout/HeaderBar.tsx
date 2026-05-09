@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react";
 
 import { ConnectionDot } from "@/components/layout/ConnectionDot";
 import { PriceFlash } from "@/components/common/PriceFlash";
+import { auth, useAuth } from "@/lib/auth";
 import { usePortfolio } from "@/lib/portfolio";
 import { useSseState } from "@/lib/sse";
 import { hydrateTheme, useTheme, type Theme } from "@/lib/theme";
@@ -101,8 +102,38 @@ export function HeaderBar() {
         <MarketStatusBadge status={marketStatus} />
         <ConnectionDot />
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        <UserChip />
       </div>
     </header>
+  );
+}
+
+function UserChip() {
+  const { user } = useAuth();
+  if (user === null) return null;
+  return (
+    <div
+      className="inline-flex items-center gap-2 pl-2 pr-1 py-1 border border-line-soft rounded-sharp bg-bg-2/40"
+      data-testid="header-user-chip"
+    >
+      <span
+        className="font-mono text-2xs uppercase tracking-eyebrow text-ink-1"
+        data-testid="header-username"
+      >
+        {user.username}
+      </span>
+      <button
+        type="button"
+        onClick={() => {
+          void auth.logout();
+        }}
+        className="font-mono text-2xs text-ink-2 hover:text-ink-0 px-1.5 py-0.5 rounded-sharp hover:bg-bg-1/60"
+        data-testid="header-logout"
+        title="Sign out"
+      >
+        Sign out
+      </button>
+    </div>
   );
 }
 

@@ -112,9 +112,26 @@ class SnapshotWriter:
             break
 
     def _tick(self) -> None:
+        """Write one snapshot per active user_profile row.
+
+        Iterating over `users_profile` (rather than `users`) covers both
+        the legacy ``default`` user and every authed account, since every
+        signup seeds a `users_profile` row. New users that show up between
+        ticks are picked up automatically — no writer restart needed.
+        """
         try:
             with self._conn_factory() as conn:
-                total = compute_total_value(conn, self._cache, self._user_id)
-                record_snapshot(conn, total, self._user_id)
+                rows = conn.execute(
+                    "SELECT id FROM users_profile"
+                ).fetchall()
+                user_ids = [r["id"] for r in rows]
+                # Defensive fallback: if the profiles table is empty (fresh
+                # migration), keep writing the configured user_id so the
+                # writer still produces *something*.
+                if not user_ids:
+                    user_ids = [self._user_id]
+                for uid in user_ids:
+                    total = compute_total_value(conn, self._cache, uid)
+                    record_snapshot(conn, total, uid)
         except Exception:  # noqa: BLE001 — background loop must not die
             logger.exception("Snapshot writer tick failed")

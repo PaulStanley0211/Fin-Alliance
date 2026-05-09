@@ -16,6 +16,7 @@ from app.api.schemas import (
     TradeResponse,
 )
 from app.api.tickers import validate_ticker_supported
+from app.auth import current_user
 from app.db import (
     InsufficientSharesError,
     apply_buy,
@@ -54,13 +55,17 @@ def _position_view(row: dict, current_price: float | None) -> Position:
 
 
 @router.get("", response_model=PortfolioResponse)
-def get_portfolio(state: AppState = Depends(get_state)) -> PortfolioResponse:
+def get_portfolio(
+    state: AppState = Depends(get_state),
+    auth_user: dict = Depends(current_user),
+) -> PortfolioResponse:
+    user_id = auth_user["id"]
     cache = state.price_cache
     with connect() as conn:
-        user = get_user(conn)
+        user = get_user(conn, user_id)
         cash = float(user["cash_balance"]) if user else 0.0
-        position_rows = list_positions(conn)
-        realized = realized_pnl(conn)
+        position_rows = list_positions(conn, user_id=user_id)
+        realized = realized_pnl(conn, user_id=user_id)
 
     positions: list[Position] = []
     market_total = 0.0
@@ -81,9 +86,11 @@ def get_portfolio(state: AppState = Depends(get_state)) -> PortfolioResponse:
 @router.get("/history", response_model=HistoryResponse)
 def get_history(
     range: Literal["1h", "1d", "1w", "1m", "all"] = Query(default="1d"),
+    auth_user: dict = Depends(current_user),
 ) -> HistoryResponse:
+    user_id = auth_user["id"]
     with connect() as conn:
-        rows = list_snapshots(conn, range_=range)
+        rows = list_snapshots(conn, range_=range, user_id=user_id)
     return HistoryResponse(
         range=range,
         snapshots=[
@@ -115,6 +122,7 @@ def _trade_response_from_row(
 async def post_trade(
     body: TradeRequest,
     state: AppState = Depends(get_state),
+    auth_user: dict = Depends(current_user),
 ) -> TradeResponse:
     """Execute a market order at the current cached price.
 
@@ -129,15 +137,16 @@ async def post_trade(
       6. Record the trade row (with cost_basis and request_id).
       7. Write a portfolio snapshot.
     """
+    user_id = auth_user["id"]
     cache = state.price_cache
     source = state.market_source
 
-    # 1. Idempotency
+    # 1. Idempotency (scoped to the authenticated user).
     if body.request_id is not None:
         with connect() as conn:
-            existing = find_trade_by_request_id(conn, body.request_id)
+            existing = find_trade_by_request_id(conn, body.request_id, user_id=user_id)
         if existing is not None:
-            return _replay_trade(existing)
+            return _replay_trade(existing, user_id=user_id)
 
     # 2. Ticker validation (per current data-source policy)
     validate_ticker_supported(body.ticker)
@@ -159,7 +168,7 @@ async def post_trade(
 
     # 4–6. Execute trade (single connection for atomicity-ish)
     with connect() as conn:
-        user = get_user(conn)
+        user = get_user(conn, user_id)
         if user is None:
             raise errors.invalid_request("User profile missing.")
         cash = float(user["cash_balance"])
@@ -170,16 +179,16 @@ async def post_trade(
                 raise errors.insufficient_cash(
                     f"Need ${cost:,.2f}, have ${cash:,.2f}."
                 )
-            applied = apply_buy(conn, body.ticker, body.quantity, price)
+            applied = apply_buy(conn, body.ticker, body.quantity, price, user_id=user_id)
             new_cash = cash - cost
         else:
             try:
-                applied = apply_sell(conn, body.ticker, body.quantity, price)
+                applied = apply_sell(conn, body.ticker, body.quantity, price, user_id=user_id)
             except InsufficientSharesError as e:
                 raise errors.insufficient_shares(str(e)) from e
             new_cash = cash + cost
 
-        update_cash_balance(conn, new_cash)
+        update_cash_balance(conn, new_cash, user_id=user_id)
         trade_row = record_trade(
             conn,
             ticker=body.ticker,
@@ -188,12 +197,13 @@ async def post_trade(
             price=price,
             cost_basis=applied.cost_basis,
             request_id=body.request_id,
+            user_id=user_id,
         )
 
     # 7. Snapshot for the P&L chart.
     if cache is not None:
         try:
-            write_snapshot_now(cache)
+            write_snapshot_now(cache, user_id=user_id)
         except Exception:  # noqa: BLE001 — snapshot failure must not break trade
             import logging
             logging.getLogger(__name__).exception("snapshot after trade failed")
@@ -205,15 +215,15 @@ async def post_trade(
     )
 
 
-def _replay_trade(row: dict) -> TradeResponse:
+def _replay_trade(row: dict, *, user_id: str) -> TradeResponse:
     """Reconstruct a TradeResponse for an idempotent dedupe hit.
 
     We re-read the *current* user cash and current position quantity to
     keep the response accurate even though the trade itself is the original.
     """
     with connect() as conn:
-        user = get_user(conn)
+        user = get_user(conn, user_id)
         cash = float(user["cash_balance"]) if user else 0.0
-        pos = get_position(conn, row["ticker"])
+        pos = get_position(conn, row["ticker"], user_id=user_id)
     qty = pos["quantity"] if pos is not None else 0.0
     return _trade_response_from_row(row, cash_balance=cash, position_quantity=qty)

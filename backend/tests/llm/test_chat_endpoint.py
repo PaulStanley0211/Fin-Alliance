@@ -276,10 +276,12 @@ class TestWatchlistChanges:
 
 
 class TestChatPersistence:
-    def test_user_and_assistant_persisted(self, client: TestClient) -> None:
+    def test_user_and_assistant_persisted(
+        self, client: TestClient, authed_user_id: str
+    ) -> None:
         _post_chat(client, "hi")
         with connect() as conn:
-            rows = recent_chat_messages(conn)
+            rows = recent_chat_messages(conn, user_id=authed_user_id)
         # 1 user + 1 assistant
         assert len(rows) == 2
         assert rows[0]["role"] == "user"
@@ -294,11 +296,13 @@ class TestChatPersistence:
         assert actions["executed_watchlist_changes"] == []
         assert actions["error"] is None
 
-    def test_actions_shape_for_trade(self, client: TestClient, seed_price) -> None:
+    def test_actions_shape_for_trade(
+        self, client: TestClient, seed_price, authed_user_id: str
+    ) -> None:
         seed_price("AAPL", 100.0)
         _post_chat(client, "buy 1 AAPL")
         with connect() as conn:
-            rows = recent_chat_messages(conn)
+            rows = recent_chat_messages(conn, user_id=authed_user_id)
         actions = rows[-1]["actions"]
         assert actions is not None
         assert len(actions["executed_trades"]) == 1
@@ -314,11 +318,13 @@ class TestChatPersistence:
         }
         assert et["status"] == "executed"
 
-    def test_history_carries_into_subsequent_call(self, client: TestClient) -> None:
+    def test_history_carries_into_subsequent_call(
+        self, client: TestClient, authed_user_id: str
+    ) -> None:
         _post_chat(client, "first")
         _post_chat(client, "second")
         with connect() as conn:
-            rows = recent_chat_messages(conn)
+            rows = recent_chat_messages(conn, user_id=authed_user_id)
         # 4 messages total; oldest-first.
         assert len(rows) == 4
         assert rows[0]["content"] == "first"
@@ -332,7 +338,7 @@ class TestChatPersistence:
 
 class TestLLMFallback:
     def test_llm_call_failure_returns_error_event(
-        self, client: TestClient, monkeypatch
+        self, client: TestClient, monkeypatch, authed_user_id: str
     ) -> None:
         """When stream_llm raises LLMCallError, the endpoint emits an
         `error` event and persists a fallback assistant turn."""
@@ -365,7 +371,7 @@ class TestLLMFallback:
 
         # User + fallback-assistant still persisted so the chat log is consistent.
         with connect() as conn:
-            rows = recent_chat_messages(conn)
+            rows = recent_chat_messages(conn, user_id=authed_user_id)
         assert len(rows) == 2
         assert rows[0]["role"] == "user"
         assert rows[1]["role"] == "assistant"

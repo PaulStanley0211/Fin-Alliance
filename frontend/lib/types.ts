@@ -205,3 +205,15 @@ export interface HealthResponse {
   db: "ready" | "error";
   market_data: "running" | "warming" | "error";
 }
+
+// ---- Auth ----------------------------------------------------------------
+
+export interface AuthUserView {
+  id: string;
+  username: string;
+}
+
+export interface AuthCredentialsBody {
+  username: string;
+  password: string;
+}

@@ -53,6 +53,27 @@ def app(db_file: Path, static_dir: Path) -> FastAPI:  # noqa: ARG001
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    """TestClient that runs the lifespan."""
+    """TestClient that runs the lifespan AND signs up a default test user.
+
+    Most tests want to exercise authenticated endpoints; making the default
+    fixture pre-authenticated keeps test bodies focused on behavior rather
+    than auth setup. Tests that need to assert 401 responses can use
+    ``unauthed_client`` instead.
+    """
+    with TestClient(app) as c:
+        resp = c.post(
+            "/api/auth/signup",
+            json={"username": "testuser", "password": "testpass123"},
+        )
+        assert resp.status_code == 201, f"test signup failed: {resp.text}"
+        yield c
+
+
+@pytest.fixture
+def unauthed_client(app: FastAPI) -> Iterator[TestClient]:
+    """TestClient with the lifespan running but no session cookie set.
+
+    Use when asserting that protected routes return 401 without auth.
+    """
     with TestClient(app) as c:
         yield c

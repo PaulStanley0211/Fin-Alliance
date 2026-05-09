@@ -61,6 +61,18 @@ def price_unavailable(message: str = "No live price available for ticker.") -> A
     return APIError(status.HTTP_503_SERVICE_UNAVAILABLE, "price_unavailable", message)
 
 
+def not_authenticated(message: str = "Sign in to continue.") -> APIError:
+    return APIError(status.HTTP_401_UNAUTHORIZED, "not_authenticated", message)
+
+
+def invalid_credentials(message: str = "Invalid username or password.") -> APIError:
+    return APIError(status.HTTP_401_UNAUTHORIZED, "invalid_credentials", message)
+
+
+def username_taken(message: str = "That username is already taken.") -> APIError:
+    return APIError(status.HTTP_409_CONFLICT, "username_taken", message)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Install handlers that wrap all error responses in our envelope."""
 
