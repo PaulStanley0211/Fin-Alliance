@@ -72,7 +72,7 @@ async def post_chat(
     # Call the LLM. On any failure, fall back gracefully — never crash the
     # request.
     try:
-        llm_response = call_llm(user_message, ctx, history)
+        llm_response = await call_llm(user_message, ctx, history)
     except LLMCallError as exc:
         logger.warning("LLM call failed: %s", exc)
         envelope = ChatResponseEnvelope(

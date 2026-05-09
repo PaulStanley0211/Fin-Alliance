@@ -11,7 +11,7 @@ Built entirely by coding agents as a capstone project for an agentic AI coding c
 - **SSE price stream** with green/red flash animations, market-closed badge, and 15s heartbeats
 - **Simulated portfolio** — $10k virtual cash, market orders, instant fills, fractional shares
 - **Portfolio visualizations** — restrained P&L heatmap, positions table, P&L chart with 1h/1d/1w/1m/all ranges
-- **AI chat assistant** — analyzes holdings, suggests and auto-executes trades via natural language
+- **AI chat assistant** — analyzes holdings, suggests and auto-executes trades via natural language; tuned for low latency (async LiteLLM path + Anthropic prompt caching + concise-reply prompt → ~2–3s on follow-up turns)
 - **Light & dark themes** — header toggle, persisted to localStorage, respects `prefers-color-scheme` on first visit
 - **Trade Bar with +/− stepper** — pinned below the chat panel for one-handed buy/sell
 - **Connection-aware** — live status dot driven by SSE heartbeats, automatic reconnection
@@ -103,7 +103,7 @@ If neither market-data key is set, the app falls back to the GBM simulator — n
 | SSE streaming with `market_status` + 15s heartbeats + market-closed handling | Complete |
 | Database layer (SQLite, lifespan init, repositories, 30s snapshot writer) | Complete |
 | Portfolio API (trade/positions/history) with idempotent trades and auto-add on trade | Complete |
-| LLM chat (`/api/chat`) with auto-execution, watchlist-disabled rejection, deterministic mock mode | Complete |
+| LLM chat (`/api/chat`) — async LiteLLM, Anthropic prompt caching, capped output, watchlist-disabled rejection, deterministic mock mode | Complete |
 | Frontend: SectorWatchlist, MainChart, PortfolioHeatmap, PnLChart, PositionsTable, TradeBar, ChatPanel | Complete |
 | Light/dark theme toggle (CSS-variable tokens, localStorage-persisted) | Complete |
 | Dockerfile (multi-stage) + start/stop scripts (mac + Windows) | Complete |
@@ -111,7 +111,7 @@ If neither market-data key is set, the app falls back to the GBM simulator — n
 
 ### Test totals
 
-- Backend: 341 unit tests (DB, market, API, LLM, sectors, Finnhub client)
+- Backend: 343 unit tests (DB, market, API, LLM, sectors, Finnhub client)
 - Frontend: 91 component / store tests
 - E2E: 19 Playwright scenarios across 9 spec files (smoke, fresh-start, sectors, theme, trading, chat, idempotency, portfolio charts, SSE resilience)
 
