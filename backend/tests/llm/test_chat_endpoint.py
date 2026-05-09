@@ -1,13 +1,20 @@
-"""Tests for POST /api/chat — full pipeline with mock LLM.
+"""Tests for POST /api/chat — full pipeline with mock LLM, streaming SSE.
 
 These exercise the same wiring as production: the FastAPI lifespan runs,
 the simulator + snapshot writer + SSE router are mounted, and a fresh DB is
 seeded. `LLM_MOCK=true` is forced by an autouse fixture, so the deterministic
 mock dispatch from PLAN.md §9 drives the LLM responses.
+
+The chat path emits a `text/event-stream` response with three event types:
+``delta`` (incremental reply text), ``done`` (final action envelope), and
+``error`` (fallback path). The ``_post_chat`` helper consumes the stream
+and reconstructs an envelope shape compatible with the pre-streaming
+contract so most assertions stay readable.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -16,10 +23,76 @@ from app.db import recent_chat_messages
 from app.db.connection import connect
 
 
+def _parse_sse(body: str) -> list[tuple[str, dict]]:
+    """Parse a complete SSE response body into ``(event_name, data_dict)``.
+
+    Uses the minimal subset of the SSE spec we actually emit: each event is
+    a ``event: NAME`` line followed by ``data: JSON``, separated by a blank
+    line. Comments / retry directives are not produced by the chat path.
+    """
+    events: list[tuple[str, dict]] = []
+    for raw_block in body.split("\n\n"):
+        block = raw_block.strip()
+        if not block:
+            continue
+        event_name = "message"
+        data_lines: list[str] = []
+        for line in block.split("\n"):
+            if line.startswith("event:"):
+                event_name = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                data_lines.append(line[len("data:"):].strip())
+        if not data_lines:
+            continue
+        try:
+            data = json.loads("\n".join(data_lines))
+        except json.JSONDecodeError:
+            continue
+        events.append((event_name, data))
+    return events
+
+
+def _envelope_from_events(events: list[tuple[str, dict]]) -> dict[str, Any]:
+    """Reduce a list of SSE events into the legacy ``ChatResponseEnvelope``
+    shape so existing assertions stay terse.
+
+    The reconstructed envelope has: ``message`` (joined deltas), the two
+    action arrays, and an ``error`` field (set if an ``error`` event was
+    emitted instead of ``done``).
+    """
+    message_parts: list[str] = []
+    executed_trades: list[dict] = []
+    executed_watchlist: list[dict] = []
+    error: str | None = None
+
+    for name, data in events:
+        if name == "delta":
+            message_parts.append(data.get("text", ""))
+        elif name == "done":
+            executed_trades = data.get("executed_trades", [])
+            executed_watchlist = data.get("executed_watchlist_changes", [])
+            error = data.get("error")
+        elif name == "error":
+            # Only adopt the error value if `done` didn't already win.
+            if error is None:
+                error = data.get("error", "llm_call_failed")
+
+    return {
+        "message": "".join(message_parts),
+        "executed_trades": executed_trades,
+        "executed_watchlist_changes": executed_watchlist,
+        "error": error,
+    }
+
+
 def _post_chat(client: TestClient, message: str) -> dict[str, Any]:
     resp = client.post("/api/chat", json={"message": message})
     assert resp.status_code == 200, resp.text
-    return resp.json()
+    assert resp.headers.get("content-type", "").startswith("text/event-stream"), (
+        f"unexpected content-type: {resp.headers.get('content-type')}"
+    )
+    events = _parse_sse(resp.text)
+    return _envelope_from_events(events)
 
 
 # --------------------------------------------------------------------------
@@ -36,6 +109,29 @@ class TestRequestValidation:
     def test_missing_message_rejected(self, client: TestClient) -> None:
         resp = client.post("/api/chat", json={})
         assert resp.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# SSE wire format
+# --------------------------------------------------------------------------
+
+
+class TestSseShape:
+    def test_emits_delta_then_done(self, client: TestClient) -> None:
+        resp = client.post("/api/chat", json={"message": "hi"})
+        assert resp.status_code == 200
+        events = _parse_sse(resp.text)
+        names = [n for n, _ in events]
+        # At least one delta, then exactly one terminal done.
+        assert names[-1] == "done"
+        assert "delta" in names
+        # Done payload has the three §9 outcome fields.
+        done_payload = [d for n, d in events if n == "done"][-1]
+        assert set(done_payload.keys()) == {
+            "executed_trades",
+            "executed_watchlist_changes",
+            "error",
+        }
 
 
 # --------------------------------------------------------------------------
@@ -235,27 +331,37 @@ class TestChatPersistence:
 
 
 class TestLLMFallback:
-    def test_llm_call_failure_returns_error_envelope(
+    def test_llm_call_failure_returns_error_event(
         self, client: TestClient, monkeypatch
     ) -> None:
-        # Disable mock mode and patch real_llm to always blow up.
+        """When stream_llm raises LLMCallError, the endpoint emits an
+        `error` event and persists a fallback assistant turn."""
         monkeypatch.setenv("LLM_MOCK", "false")
 
-        def boom(*_args, **_kwargs):
+        async def boom(*_args, **_kwargs):
             from app.llm.client import LLMCallError
 
+            # Async generators must yield-or-raise; raising before any yield
+            # surfaces from the first `__anext__` call inside the endpoint.
             raise LLMCallError("simulated network failure")
+            yield  # pragma: no cover - keeps this an async generator
 
         # Patch where chat.py looks it up.
-        monkeypatch.setattr("app.llm.chat.call_llm", boom)
+        monkeypatch.setattr("app.llm.chat.stream_llm", boom)
 
         resp = client.post("/api/chat", json={"message": "hello"})
         assert resp.status_code == 200
-        body = resp.json()
-        assert body["error"] == "llm_call_failed"
-        assert body["executed_trades"] == []
-        assert body["executed_watchlist_changes"] == []
-        assert "couldn" in body["message"].lower() or "sorry" in body["message"].lower()
+        events = _parse_sse(resp.text)
+        names = [n for n, _ in events]
+        assert "error" in names
+        envelope = _envelope_from_events(events)
+        assert envelope["error"] == "llm_call_failed"
+        assert envelope["executed_trades"] == []
+        assert envelope["executed_watchlist_changes"] == []
+        assert (
+            "couldn" in envelope["message"].lower()
+            or "sorry" in envelope["message"].lower()
+        )
 
         # User + fallback-assistant still persisted so the chat log is consistent.
         with connect() as conn:

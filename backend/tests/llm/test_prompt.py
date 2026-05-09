@@ -74,7 +74,7 @@ class TestSystemPrompt:
         # The phrase that used to live in the prompt:
         assert "manage the watchlist" not in lowered
         assert "watchlist proactively" not in lowered
-        # The schema example must show an empty watchlist_changes array.
+        # The actions example must show an empty watchlist_changes array.
         assert '"watchlist_changes": []' in prompt
 
     def test_empty_portfolio_renders_none(self):
@@ -89,11 +89,17 @@ class TestSystemPrompt:
         assert "explicit" in prompt.lower()
         assert "trades" in prompt
 
-    def test_describes_json_schema(self):
+    def test_describes_tagged_response_format(self):
+        # The streaming chat path uses a tagged format (`<reply>`/`<actions>`)
+        # rather than a single JSON envelope. The prompt must describe both
+        # tags and the JSON shape inside `<actions>`.
         prompt = build_system_prompt(_empty_ctx())
+        assert "<reply>" in prompt
+        assert "</reply>" in prompt
+        assert "<actions>" in prompt
+        assert "</actions>" in prompt
         assert "trades" in prompt
-        assert "watchlist_changes" in prompt  # field still exists in schema
-        assert "message" in prompt
+        assert "watchlist_changes" in prompt
 
 
 class TestBuildMessages:

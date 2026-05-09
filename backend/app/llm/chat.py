@@ -1,34 +1,54 @@
-"""POST /api/chat — the LLM-backed chat endpoint.
+"""POST /api/chat — the LLM-backed chat endpoint, streaming edition.
+
+The response is `text/event-stream`. The frontend opens a fetch + ReadableStream
+and consumes three event types:
+
+- ``event: delta`` — ``data: {"text": "..."}`` — incremental reply text. Many
+  of these arrive between the request and ``done``; the frontend appends each
+  to the assistant bubble as it lands.
+- ``event: done`` — ``data: {"executed_trades": [...], "executed_watchlist_changes": [...], "error": null}``
+  — final outcome envelope. Sent exactly once, at the end of a successful turn.
+- ``event: error`` — ``data: {"message": "...", "error": "llm_call_failed"}``
+  — sent instead of ``done`` if the LLM call itself failed. Fallback text plus
+  an error code so the frontend can render the same error chip as before.
 
 Pipeline (PLAN.md §9):
-  1. Validate body and load conversation history (oldest-first, capped 20).
-  2. Build a `PortfolioContext` from DB + price cache.
-  3. Call the LLM client (mock when LLM_MOCK=true).
-  4. Execute LLM-emitted trades and watchlist changes via the executor.
-  5. Persist user + assistant messages (assistant carries the action envelope).
-  6. Return `{message, executed_trades[], executed_watchlist_changes[], error}`.
 
-If the LLM call itself fails (network, parse error, etc.), we return a
-fallback envelope with `error` set and empty action arrays. We still persist
-both the user message and the fallback assistant message so the conversation
-history stays consistent.
+  1. Validate body and load conversation history (oldest-first, capped 20).
+     Validation errors return a regular JSON 400 — no streaming kicks in
+     until we know the request is well-formed.
+  2. Persist the user message (so it shows up in history even if streaming
+     fails partway through).
+  3. Build a `PortfolioContext` from DB + price cache.
+  4. Stream the LLM reply, forwarding `delta` events to the client.
+  5. On the final yield (carrying the parsed `LLMResponse`), run the
+     executor for any trades / watchlist changes the model emitted.
+  6. Persist the assistant message with the executed-action envelope and
+     emit ``event: done``.
+
+If the LLM call fails (network, parse, etc.) we emit ``event: error`` with
+a fallback message and persist that as the assistant turn so the
+conversation history stays consistent.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.db import append_chat_message, recent_chat_messages
 from app.db.connection import connect
 from app.state import AppState, get_state
 
-from .client import LLMCallError, call_llm
+from .client import LLMCallError, stream_llm
 from .context import build_portfolio_context
 from .executor import execute_actions
-from .schemas import ChatResponseEnvelope
+from .schemas import ChatResponseEnvelope, LLMResponse
 
 logger = logging.getLogger(__name__)
 
@@ -47,41 +67,75 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
 
 
-@router.post("", response_model=ChatResponseEnvelope)
+@router.post("")
 async def post_chat(
     body: ChatRequest,
     state: AppState = Depends(get_state),
-) -> ChatResponseEnvelope:
-    user_message = body.message
+) -> StreamingResponse:
+    return StreamingResponse(
+        _chat_event_stream(body.message, state),
+        media_type="text/event-stream",
+        # Disable proxy buffering so chunks don't pile up in front of the client.
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+    )
 
-    # Load the most recent 20 turns oldest-first. Each item is
-    # {role, content, actions, ...}; build_messages() keeps the role/content
-    # only.
+
+# ---------------------------------------------------------------------------
+# SSE event-stream generator
+# ---------------------------------------------------------------------------
+
+
+async def _chat_event_stream(
+    user_message: str,
+    state: AppState,
+) -> AsyncIterator[bytes]:
+    """Yield raw SSE event bytes covering one chat turn.
+
+    Every yield is a complete event (``event: <name>\\ndata: <json>\\n\\n``)
+    so middleboxes can flush them line-buffered.
+    """
+    # Step 1 — load history (cap 20 most recent, oldest-first).
     with connect() as conn:
         history = recent_chat_messages(conn, limit=20)
 
-    # Snapshot the portfolio for grounding the system prompt.
+    # Step 2 — snapshot portfolio state for grounding.
     ctx = build_portfolio_context(state.price_cache)
 
-    # Persist the user message before calling the LLM. If the LLM call fails
-    # the user's turn is still in the log, which makes retries / debugging
-    # straightforward.
+    # Step 3 — persist the user message *before* the model call. If the call
+    # explodes mid-flight, the user's turn is still in the history.
     with connect() as conn:
         append_chat_message(conn, role="user", content=user_message)
 
-    # Call the LLM. On any failure, fall back gracefully — never crash the
-    # request.
+    # Step 4 — drive the streaming LLM call.
+    final_payload: LLMResponse | None = None
+    streamed_any_text = False
+
     try:
-        llm_response = await call_llm(user_message, ctx, history)
+        async for delta, payload in stream_llm(user_message, ctx, history):
+            if delta:
+                streamed_any_text = True
+                yield _sse_event("delta", {"text": delta})
+            if payload is not None:
+                final_payload = payload
     except LLMCallError as exc:
         logger.warning("LLM call failed: %s", exc)
+        # Emit a fallback message as a delta so the assistant bubble has
+        # *something* visible (browsers that swallowed the `error` event
+        # still get a readable bubble), then the explicit `error` event so
+        # the panel can render the red chip.
+        if not streamed_any_text:
+            yield _sse_event("delta", {"text": FALLBACK_MESSAGE})
+        yield _sse_event(
+            "error",
+            {"message": FALLBACK_MESSAGE, "error": "llm_call_failed"},
+        )
+        # Persist the fallback assistant turn for chat-history continuity.
         envelope = ChatResponseEnvelope(
             message=FALLBACK_MESSAGE,
             executed_trades=[],
             executed_watchlist_changes=[],
             error="llm_call_failed",
         )
-        # Persist the fallback assistant message so the chat log stays in sync.
         with connect() as conn:
             append_chat_message(
                 conn,
@@ -89,21 +143,29 @@ async def post_chat(
                 content=envelope.message,
                 actions=envelope.model_dump(exclude={"message"}),
             )
-        return envelope
+        return
 
-    # Auto-execute any actions the LLM emitted. Each action is independent —
-    # rejections do not abort the others.
-    executed_trades, executed_watchlist = await execute_actions(llm_response, state)
+    # Step 5 — execute actions from the parsed payload.
+    if final_payload is None:
+        # The stream ended without ever yielding a final payload (shouldn't
+        # happen with a well-behaved generator, but treat it as an error).
+        logger.error("LLM stream ended without a final payload")
+        yield _sse_event(
+            "error",
+            {"message": FALLBACK_MESSAGE, "error": "llm_call_failed"},
+        )
+        return
+
+    executed_trades, executed_watchlist = await execute_actions(final_payload, state)
 
     envelope = ChatResponseEnvelope(
-        message=llm_response.message,
+        message=final_payload.message,
         executed_trades=executed_trades,
         executed_watchlist_changes=executed_watchlist,
         error=None,
     )
 
-    # Persist the assistant message with the *outcome* envelope (minus the
-    # message text itself) so chat_messages.actions matches PLAN.md §7.
+    # Step 6 — persist the assistant turn, then emit `done`.
     with connect() as conn:
         append_chat_message(
             conn,
@@ -112,4 +174,21 @@ async def post_chat(
             actions=envelope.model_dump(exclude={"message"}),
         )
 
-    return envelope
+    yield _sse_event(
+        "done",
+        {
+            "executed_trades": [t.model_dump() for t in executed_trades],
+            "executed_watchlist_changes": [w.model_dump() for w in executed_watchlist],
+            "error": None,
+        },
+    )
+
+
+def _sse_event(event_name: str, data: dict) -> bytes:
+    """Format one SSE frame as bytes.
+
+    Lines are separated by ``\\n`` and each event is terminated by a blank
+    line per the SSE wire spec.
+    """
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event_name}\ndata: {payload}\n\n".encode("utf-8")

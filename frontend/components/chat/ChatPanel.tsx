@@ -5,7 +5,6 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, api } from "@/lib/api";
 import { usePortfolio } from "@/lib/portfolio";
 import type {
-  ChatResponseEnvelope,
   ExecutedTrade,
   ExecutedWatchlistChange,
 } from "@/lib/types";
@@ -68,43 +67,84 @@ export function ChatPanel() {
     const text = draft.trim();
     if (!text || pending) return;
 
+    // Push only the user turn upfront. The assistant bubble is materialized
+    // lazily on the first streaming delta so the loading dots are
+    // unambiguous (no empty bubble + loading bubble side-by-side).
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setDraft("");
     setPending(true);
     setError(null);
 
+    // Operate on the last message in state — this avoids any closure-captured
+    // index racing the React batched updates when multiple SSE callbacks
+    // fire synchronously in the same tick.
+    function patchOrAppendAssistant(
+      patch: (m: ChatMessage) => ChatMessage,
+      seedContent = "",
+    ) {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === "assistant") {
+          const next = prev.slice();
+          next[next.length - 1] = patch(last);
+          return next;
+        }
+        return [...prev, patch({ role: "assistant", content: seedContent })];
+      });
+    }
+
     try {
-      const envelope: ChatResponseEnvelope = await api.chat({ message: text });
-      setMessages((prev) => [
-        ...prev,
+      let executedTradesCount = 0;
+      await api.chatStream(
+        { message: text },
         {
-          role: "assistant",
-          content: envelope.message,
-          actions: {
-            trades: envelope.executed_trades,
-            watchlist_changes: envelope.executed_watchlist_changes,
+          onDelta: (chunk) => {
+            patchOrAppendAssistant((m) => ({
+              ...m,
+              content: m.content + chunk,
+            }));
           },
-          error: envelope.error,
+          onDone: (envelope) => {
+            executedTradesCount = envelope.executed_trades.length;
+            patchOrAppendAssistant((m) => ({
+              ...m,
+              actions: {
+                trades: envelope.executed_trades,
+                watchlist_changes: envelope.executed_watchlist_changes,
+              },
+              error: envelope.error,
+            }));
+          },
+          onError: (errCode, errMessage) => {
+            // Server emitted an `error` SSE event mid-flight. If we never
+            // streamed any text, surface the fallback message in the bubble.
+            patchOrAppendAssistant(
+              (m) => ({
+                ...m,
+                content: m.content || errMessage,
+                error: errCode,
+              }),
+              errMessage,
+            );
+            setError(errMessage);
+          },
         },
-      ]);
-      // If the LLM auto-executed any trades, refresh the portfolio so the
-      // rest of the workstation reflects them. Watchlist changes are now
-      // short-circuited as `watchlist_disabled` server-side, so there's no
-      // sector taxonomy to refetch on a successful chat turn.
-      if (envelope.executed_trades.length > 0) {
+      );
+
+      if (executedTradesCount > 0) {
         await portfolio.refresh();
       }
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : (e as Error).message;
       setError(msg);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Sorry — that didn't work. Please try again.",
+      patchOrAppendAssistant(
+        (m) => ({
+          ...m,
+          content: m.content || "Sorry — that didn't work. Please try again.",
           error: msg,
-        },
-      ]);
+        }),
+        "Sorry — that didn't work. Please try again.",
+      );
     } finally {
       setPending(false);
     }
@@ -149,7 +189,7 @@ export function ChatPanel() {
                 message={m}
               />
             ))}
-            {pending ? <LoadingBubble /> : null}
+            {pending && isAwaitingFirstDelta(messages) ? <LoadingBubble /> : null}
           </ul>
         )}
       </div>
@@ -350,6 +390,12 @@ function EmptyState() {
       </p>
     </div>
   );
+}
+
+function isAwaitingFirstDelta(messages: ChatMessage[]): boolean {
+  if (messages.length === 0) return true;
+  const last = messages[messages.length - 1];
+  return last.role !== "assistant";
 }
 
 function roleIndexFor(messages: ChatMessage[], idx: number): number {

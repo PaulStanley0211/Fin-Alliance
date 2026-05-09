@@ -10,13 +10,13 @@ Public API:
     PortfolioContext    - Snapshot passed into the system prompt
     build_system_prompt - Constructs the system prompt with portfolio context
     build_messages      - Assembles system + history + new-user messages for the LLM
-    call_llm            - Dispatches to mock_llm or real_llm based on LLM_MOCK
+    stream_llm          - Async generator yielding (delta, payload) for SSE chat
     mock_llm            - Deterministic regex dispatch for E2E (PLAN.md §9 table)
     LLMCallError        - Raised when the LLM call/parse fails (caller falls back)
     DEFAULT_MODEL       - "anthropic/claude-haiku-4-5"
 """
 
-from .client import DEFAULT_MODEL, LLMCallError, call_llm, real_llm
+from .client import DEFAULT_MODEL, LLMCallError, stream_llm
 from .context import build_portfolio_context
 from .executor import execute_actions
 from .mock import mock_llm
@@ -48,8 +48,7 @@ __all__ = [
     "build_messages",
     "build_portfolio_context",
     "build_system_prompt",
-    "call_llm",
     "execute_actions",
     "mock_llm",
-    "real_llm",
+    "stream_llm",
 ]

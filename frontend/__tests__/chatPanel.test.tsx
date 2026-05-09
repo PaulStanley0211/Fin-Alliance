@@ -53,6 +53,41 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Build a `text/event-stream` Response from a list of (event, data) pairs.
+ *
+ * `chunks` controls how the body is split across `reader.read()` calls — by
+ * default each event is its own ReadableStream chunk so the test exercises
+ * the chunk-buffering path in `dispatchSseBlock`. Pass `chunks: "single"`
+ * to deliver the whole body in one read.
+ */
+function sseResponse(
+  events: Array<[string, object]>,
+  opts: { chunks?: "per-event" | "single" } = {},
+): Response {
+  const encoder = new TextEncoder();
+  const blocks = events.map(
+    ([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`,
+  );
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (opts.chunks === "single") {
+        controller.enqueue(encoder.encode(blocks.join("")));
+      } else {
+        for (const block of blocks) {
+          controller.enqueue(encoder.encode(block));
+        }
+      }
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
 const baseRouting = ({ url }: Capture) => {
   if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
   return jsonResponse({ error: "not_found", message: "x" }, 404);
@@ -65,20 +100,26 @@ describe("ChatPanel", () => {
     expect(screen.getByText(/ask finally anything/i)).toBeInTheDocument();
     const send = screen.getByTestId("chat-send") as HTMLButtonElement;
     expect(send.disabled).toBe(true);
-    // Allow the portfolio initial fetch to flush so React's act() warning
-    // doesn't fire on subsequent state updates.
     await waitFor(() =>
       expect(screen.getByTestId("chat-input")).toBeInTheDocument(),
     );
   });
 
-  it("sends the message, shows loading, then renders the assistant reply", async () => {
-    let resolveChat: ((res: Response) => void) | null = null;
+  it("streams deltas into the assistant bubble and renders the final text", async () => {
     mockFetch((call) => {
       if (call.url === "/api/chat") {
-        return new Promise<Response>((resolve) => {
-          resolveChat = resolve;
-        });
+        return sseResponse([
+          ["delta", { text: "Your cash balance " }],
+          ["delta", { text: "is $10,000." }],
+          [
+            "done",
+            {
+              executed_trades: [],
+              executed_watchlist_changes: [],
+              error: null,
+            },
+          ],
+        ]);
       }
       return baseRouting(call);
     });
@@ -87,75 +128,64 @@ describe("ChatPanel", () => {
     fireEvent.change(screen.getByTestId("chat-input"), {
       target: { value: "what's my balance?" },
     });
+    fireEvent.click(screen.getByTestId("chat-send"));
 
-    const send = screen.getByTestId("chat-send");
-    fireEvent.click(send);
-
-    // Loading bubble shows; user message in DOM
+    // User message is rendered immediately.
     await waitFor(() => {
-      expect(screen.getByTestId("chat-loading")).toBeInTheDocument();
-    });
-    expect(
-      container.querySelector('[data-testid~="chat-message-0"]'),
-    ).toBeInTheDocument();
-    expect(
-      container.querySelector('[data-testid~="chat-message-user-0"]'),
-    ).toBeInTheDocument();
-
-    resolveChat!(
-      jsonResponse({
-        message: "Your cash balance is $10,000.",
-        executed_trades: [],
-        executed_watchlist_changes: [],
-        error: null,
-      }),
-    );
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("chat-loading")).toBeNull();
+      expect(
+        container.querySelector('[data-testid~="chat-message-user-0"]'),
+      ).toBeInTheDocument();
     });
 
-    // Both flat (chat-message-1) and role-scoped (chat-message-assistant-0)
-    // testids should resolve the same DOM node.
-    const flat = container.querySelector('[data-testid~="chat-message-1"]');
-    const role = container.querySelector('[data-testid~="chat-message-assistant-0"]');
-    expect(flat).toBe(role);
-    expect(flat).toHaveTextContent(/Your cash balance is \$10,000\./);
+    // Assistant bubble accumulates both deltas.
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-testid~="chat-message-assistant-0"]'),
+      ).toHaveTextContent(/Your cash balance is \$10,000\./);
+    });
+
+    // Loading bubble is gone after streaming completes.
+    expect(screen.queryByTestId("chat-loading")).toBeNull();
   });
 
-  it("renders inline trade receipts and watchlist_disabled notes with the right testids", async () => {
+  it("renders inline trade receipts and watchlist_disabled notes from the done event", async () => {
     mockFetch((call) => {
       if (call.url === "/api/chat") {
-        return jsonResponse({
-          message: "Bought 10 NVDA. Watchlist actions are disabled now.",
-          executed_trades: [
+        return sseResponse([
+          ["delta", { text: "Bought 10 NVDA. Watchlist actions are disabled now." }],
+          [
+            "done",
             {
-              ticker: "NVDA",
-              side: "buy",
-              quantity: 10,
-              status: "executed",
-              price: 800.5,
+              executed_trades: [
+                {
+                  ticker: "NVDA",
+                  side: "buy",
+                  quantity: 10,
+                  status: "executed",
+                  price: 800.5,
+                  error: null,
+                },
+                {
+                  ticker: "BRK",
+                  side: "buy",
+                  quantity: 1,
+                  status: "rejected",
+                  price: null,
+                  error: "ticker_unsupported",
+                },
+              ],
+              executed_watchlist_changes: [
+                {
+                  ticker: "PYPL",
+                  action: "add",
+                  status: "rejected",
+                  error: "watchlist_disabled",
+                },
+              ],
               error: null,
             },
-            {
-              ticker: "BRK",
-              side: "buy",
-              quantity: 1,
-              status: "rejected",
-              price: null,
-              error: "ticker_unsupported",
-            },
           ],
-          executed_watchlist_changes: [
-            {
-              ticker: "PYPL",
-              action: "add",
-              status: "rejected",
-              error: "watchlist_disabled",
-            },
-          ],
-          error: null,
-        });
+        ]);
       }
       return baseRouting(call);
     });
@@ -175,20 +205,35 @@ describe("ChatPanel", () => {
     expect(screen.getByTestId("chat-action-trade-NVDA")).toHaveTextContent(/800\.50/);
     expect(screen.getByTestId("chat-action-trade-BRK")).toHaveTextContent(/ticker not supported/i);
 
-    // watchlist_disabled rejections render as a muted note, not a red error chip.
     expect(screen.queryByTestId("chat-action-watchlist-PYPL")).toBeNull();
     const note = screen.getByTestId("chat-watchlist-disabled-0");
     expect(note).toHaveTextContent(/watchlist actions are disabled/i);
-    // Should NOT carry the red error chip styling (no down/down border).
     expect(note.className).not.toMatch(/border-down/);
   });
 
   it("disables the input + send button while a request is in flight", async () => {
-    let resolveChat: ((res: Response) => void) | null = null;
+    let releaseStream: (() => void) | null = null;
     mockFetch((call) => {
       if (call.url === "/api/chat") {
-        return new Promise<Response>((resolve) => {
-          resolveChat = resolve;
+        // A stream that doesn't close until the test releases it. The
+        // ChatPanel should keep `pending=true` for the entire window.
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            releaseStream = () => {
+              controller.enqueue(
+                encoder.encode(
+                  'event: delta\ndata: {"text":"ok"}\n\n' +
+                    'event: done\ndata: {"executed_trades":[],"executed_watchlist_changes":[],"error":null}\n\n',
+                ),
+              );
+              controller.close();
+            };
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
         });
       }
       return baseRouting(call);
@@ -204,27 +249,74 @@ describe("ChatPanel", () => {
     await waitFor(() => expect(input.disabled).toBe(true));
     expect(send.disabled).toBe(true);
 
-    resolveChat!(
-      jsonResponse({
-        message: "ok",
-        executed_trades: [],
-        executed_watchlist_changes: [],
-        error: null,
-      }),
-    );
+    releaseStream!();
 
     await waitFor(() => expect(input.disabled).toBe(false));
   });
 
-  it("surfaces an error envelope inline when the LLM call failed server-side", async () => {
+  it("shows the loading bubble until the first delta arrives", async () => {
+    let pushDelta: (() => void) | null = null;
+    let closeStream: (() => void) | null = null;
     mockFetch((call) => {
       if (call.url === "/api/chat") {
-        return jsonResponse({
-          message: "Sorry — I couldn't reach the assistant just now.",
-          executed_trades: [],
-          executed_watchlist_changes: [],
-          error: "llm_call_failed",
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            pushDelta = () => {
+              controller.enqueue(
+                encoder.encode('event: delta\ndata: {"text":"hello"}\n\n'),
+              );
+            };
+            closeStream = () => {
+              controller.enqueue(
+                encoder.encode(
+                  'event: done\ndata: {"executed_trades":[],"executed_watchlist_changes":[],"error":null}\n\n',
+                ),
+              );
+              controller.close();
+            };
+          },
         });
+        return new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      return baseRouting(call);
+    });
+
+    render(<ChatPanel />);
+    fireEvent.change(screen.getByTestId("chat-input"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByTestId("chat-send"));
+
+    // Loading bubble visible while we haven't streamed any text yet.
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-loading")).toBeInTheDocument();
+    });
+
+    pushDelta!();
+
+    // Once the first delta lands the loading bubble is replaced by the
+    // assistant bubble.
+    await waitFor(() => {
+      expect(screen.queryByTestId("chat-loading")).toBeNull();
+    });
+
+    closeStream!();
+  });
+
+  it("surfaces an error event inline and persists the user turn", async () => {
+    mockFetch((call) => {
+      if (call.url === "/api/chat") {
+        return sseResponse([
+          [
+            "error",
+            {
+              message: "Sorry — I couldn't reach the assistant just now.",
+              error: "llm_call_failed",
+            },
+          ],
+        ]);
       }
       return baseRouting(call);
     });

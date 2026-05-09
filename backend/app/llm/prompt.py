@@ -8,8 +8,20 @@ Two-block system prompt:
 2. **Dynamic portfolio block** — cash, total, positions. Re-rendered each
    turn from live state, so it sits *after* the cache breakpoint.
 
-Concision is enforced via the system prompt and a bounded ``max_tokens`` on
-the request side (see ``client.py``).
+The model is asked to emit a **tagged response** rather than JSON:
+
+    <reply>
+    Conversational text the user sees, streamed live as it arrives.
+    </reply>
+    <actions>
+    {"trades": [...], "watchlist_changes": []}
+    </actions>
+
+This format is friendlier to incremental streaming than a single JSON
+object — the streaming parser in `client.py` can forward `<reply>` content
+as deltas while it's still arriving, and only parse the small `<actions>`
+JSON once the model has emitted it. Schema validation is deferred to the
+executor (which already validates each trade against live cash / shares).
 """
 
 from __future__ import annotations
@@ -29,7 +41,7 @@ Style:
 - Lead with the answer; data after.
 
 Trading rules (auto-execution — there is no confirmation step):
-- Only emit a trade in `trades[]` when the user has explicitly stated intent to buy or sell with a ticker and quantity, OR has explicitly agreed to a specific suggestion in this turn.
+- Only emit a trade in `trades` when the user has explicitly stated intent to buy or sell with a ticker and quantity, OR has explicitly agreed to a specific suggestion in this turn.
 - Casual or analytical questions ("is my portfolio risky?", "thoughts on NVDA?") return analysis only, with `trades` empty.
 - If a trade would fail validation, still emit it — the system surfaces the rejection.
 
@@ -38,7 +50,21 @@ Watchlist:
 
 Cash is $10,000 simulated. Trades are instant-fill market orders, no fees.
 
-Always respond with valid JSON: `{"message": "...", "trades": [...], "watchlist_changes": []}`."""
+=== RESPONSE FORMAT ===
+Always respond with EXACTLY this two-tag structure, in this order:
+
+<reply>
+Your conversational reply here. Plain text only — no JSON, no extra tags.
+</reply>
+<actions>
+{"trades": [{"ticker": "AAPL", "side": "buy", "quantity": 10}], "watchlist_changes": []}
+</actions>
+
+Rules:
+- Both tags are required, even when there are no actions: emit `{"trades": [], "watchlist_changes": []}` inside `<actions>`.
+- `<actions>` MUST be a valid JSON object on a single line or pretty-printed; no trailing commas.
+- Each trade has exactly `ticker` (string), `side` ("buy" or "sell"), `quantity` (positive number).
+- `watchlist_changes` MUST be an empty array."""
 
 
 PORTFOLIO_BLOCK_TEMPLATE = """=== CURRENT PORTFOLIO ===

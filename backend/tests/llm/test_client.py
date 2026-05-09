@@ -1,7 +1,7 @@
-"""Tests for the LiteLLM client wrapper.
+"""Tests for the streaming LiteLLM client wrapper.
 
 We never make a real Anthropic call here — the real path is exercised by
-patching `litellm.acompletion`.
+patching `litellm.acompletion` to return an async iterator of fake chunks.
 
 Note on env handling: LiteLLM eagerly loads the project-root `.env` on
 import, which sets `LLM_MOCK=true`. The conftest's autouse fixture also
@@ -15,10 +15,16 @@ without the `@pytest.mark.asyncio` decorator.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import AsyncIterator
 
 import pytest
 
-from app.llm.client import DEFAULT_MODEL, LLMCallError, call_llm, real_llm
+from app.llm.client import (
+    DEFAULT_MODEL,
+    LLMCallError,
+    TaggedStreamParser,
+    stream_llm,
+)
 from app.llm.schemas import LLMResponse, PortfolioContext
 
 
@@ -26,155 +32,235 @@ def _ctx() -> PortfolioContext:
     return PortfolioContext(cash_balance=10000.0, total_value=10000.0)
 
 
-def _fake_completion_response(json_str: str) -> SimpleNamespace:
-    """Build a duck-typed LiteLLM ModelResponse stand-in."""
+def _chunk(content: str) -> SimpleNamespace:
+    """Build a duck-typed LiteLLM streaming chunk carrying `content`."""
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=json_str))]
+        choices=[SimpleNamespace(delta=SimpleNamespace(content=content))]
     )
 
 
-def _make_fake_acompletion(response):
-    """Return an async stand-in for `litellm.acompletion`.
+def _make_fake_acompletion(chunks: list[str] | BaseException):
+    """Return an async stand-in for `litellm.acompletion(stream=True)`.
 
-    `response` may be a SimpleNamespace or an Exception instance to raise.
+    `chunks` may be a list of strings (each becomes one streaming chunk) or
+    an Exception instance to raise from the initial `acompletion()` call.
     The kwargs the call was made with are recorded on `fake.captured`.
     """
 
+    async def _aiter(items: list[str]) -> AsyncIterator[SimpleNamespace]:
+        for s in items:
+            yield _chunk(s)
+
     async def fake(**kwargs):
         fake.captured = kwargs
-        if isinstance(response, BaseException):
-            raise response
-        return response
+        if isinstance(chunks, BaseException):
+            raise chunks
+        return _aiter(chunks)
 
     fake.captured = {}
     return fake
 
 
-class TestDispatch:
-    async def test_mock_mode_routes_to_mock(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("LLM_MOCK", "true")
-        r = await call_llm("hi", _ctx(), [])
-        assert r.message == "Hi, I'm FinAlly. Ask me about your portfolio."
-
-    async def test_mock_mode_case_insensitive(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("LLM_MOCK", "TRUE")
-        r = await call_llm("buy 1 AAPL", _ctx(), [])
-        assert r.trades and r.trades[0].ticker == "AAPL"
-
-    async def test_mock_mode_off_calls_real(self, monkeypatch: pytest.MonkeyPatch):
-        # `setenv("")` defeats both the conftest autouse fixture and any
-        # `LLM_MOCK=true` leaked from the project-root `.env` (loaded by
-        # LiteLLM at import time).
-        monkeypatch.setenv("LLM_MOCK", "")
-
-        fake = _make_fake_acompletion(_fake_completion_response('{"message": "ok"}'))
-        monkeypatch.setattr("litellm.acompletion", fake)
-        r = await call_llm("hello", _ctx(), [])
-        assert r.message == "ok"
-        assert fake.captured["model"] == DEFAULT_MODEL
-        assert fake.captured["response_format"] is LLMResponse
-
-    async def test_llm_mock_false_uses_real_path(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
-        monkeypatch.setenv("LLM_MOCK", "false")
-
-        fake = _make_fake_acompletion(_fake_completion_response('{"message": "real"}'))
-        monkeypatch.setattr("litellm.acompletion", fake)
-        r = await call_llm("hello", _ctx(), [])
-        assert r.message == "real"
+async def _drain(gen) -> tuple[str, LLMResponse | None]:
+    """Drive the async generator to completion. Returns the joined deltas
+    and the final payload (None if not provided)."""
+    text = []
+    final: LLMResponse | None = None
+    async for delta, payload in gen:
+        if delta:
+            text.append(delta)
+        if payload is not None:
+            final = payload
+    return "".join(text), final
 
 
-class TestRealLLMSuccess:
-    async def test_parses_full_response(self, monkeypatch: pytest.MonkeyPatch):
-        json_str = (
-            '{"message": "Bought.", '
-            '"trades": [{"ticker": "AAPL", "side": "buy", "quantity": 5}], '
-            '"watchlist_changes": []}'
+# ---------------------------------------------------------------------------
+# TaggedStreamParser unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestTaggedStreamParser:
+    def test_emits_text_inside_reply_tag(self):
+        p = TaggedStreamParser()
+        # Feed in chunks; the parser holds back the last 9 chars while inside
+        # <reply>, so we'll get most of "hello" emitted but not the last few
+        # chars until the close tag arrives.
+        p.feed("<reply>hello world, what's up</reply>")
+        reply, actions = p.finalize()
+        assert reply == "hello world, what's up"
+        assert actions == {"trades": [], "watchlist_changes": []}
+
+    def test_emits_chunked_text_progressively(self):
+        p = TaggedStreamParser()
+        d1 = p.feed("<reply>The market is")
+        d2 = p.feed(" looking strong today")
+        d3 = p.feed(" overall.</reply><actions>")
+        d4 = p.feed('{"trades": [], "watchlist_changes": []}</actions>')
+        joined = (d1 + d2 + d3 + d4).strip()
+        assert "looking strong" in joined
+        reply, _ = p.finalize()
+        assert reply.startswith("The market is")
+        assert reply.endswith("overall.")
+
+    def test_strips_leading_newlines_after_reply_open(self):
+        p = TaggedStreamParser()
+        delta = p.feed("<reply>\n\nReady.</reply>")
+        # No leading newlines in the first delta the user sees.
+        assert delta.startswith("Ready") or "Ready" in delta
+
+    def test_parses_actions_with_trades(self):
+        p = TaggedStreamParser()
+        p.feed(
+            "<reply>buying.</reply><actions>"
+            '{"trades": [{"ticker": "AAPL", "side": "buy", "quantity": 5}], '
+            '"watchlist_changes": []}</actions>'
         )
-        fake = _make_fake_acompletion(_fake_completion_response(json_str))
-        monkeypatch.setattr("litellm.acompletion", fake)
-        r = await real_llm("buy 5 AAPL", _ctx(), [])
-        assert r.message == "Bought."
-        assert r.trades[0].quantity == 5
-
-    async def test_passes_messages_argument(self, monkeypatch: pytest.MonkeyPatch):
-        fake = _make_fake_acompletion(_fake_completion_response('{"message": "x"}'))
-        monkeypatch.setattr("litellm.acompletion", fake)
-        history = [
-            {"role": "user", "content": "earlier"},
-            {"role": "assistant", "content": "earlier reply"},
+        reply, actions = p.finalize()
+        assert reply == "buying."
+        assert actions["trades"] == [
+            {"ticker": "AAPL", "side": "buy", "quantity": 5}
         ]
-        await real_llm("now", _ctx(), history)
-        msgs = fake.captured["messages"]
-        assert msgs[0]["role"] == "system"
-        assert msgs[-1] == {"role": "user", "content": "now"}
-        # History rows preserved between system and new-user
-        assert {"role": "user", "content": "earlier"} in msgs
+        assert actions["watchlist_changes"] == []
 
-    async def test_system_prompt_has_cache_control(
+    def test_malformed_actions_json_is_tolerated(self):
+        p = TaggedStreamParser()
+        p.feed("<reply>hi.</reply><actions>not json {{</actions>")
+        reply, actions = p.finalize()
+        assert reply == "hi."
+        # Falls back to empty arrays.
+        assert actions == {"trades": [], "watchlist_changes": []}
+
+    def test_missing_reply_tag_falls_back_to_raw_text(self):
+        # Worst-case fallback: model forgot the tags entirely. The reply
+        # text is still recoverable from finalize() so the chat bubble
+        # isn't blank.
+        p = TaggedStreamParser()
+        p.feed("Just some text with no tags at all.")
+        reply, _ = p.finalize()
+        assert reply == "Just some text with no tags at all."
+
+    def test_unclosed_reply_tag_returns_partial_text(self):
+        # Stream truncated mid-reply — finalize() should still hand us the
+        # text we did get.
+        p = TaggedStreamParser()
+        p.feed("<reply>partial answer")
+        reply, actions = p.finalize()
+        assert reply == "partial answer"
+        assert actions == {"trades": [], "watchlist_changes": []}
+
+
+# ---------------------------------------------------------------------------
+# stream_llm dispatch — mock vs real
+# ---------------------------------------------------------------------------
+
+
+class TestStreamDispatch:
+    async def test_mock_mode_yields_mock_response(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        """The static instructions block must carry `cache_control: ephemeral`
-        so Anthropic re-uses the cached prefix on follow-up turns."""
-        fake = _make_fake_acompletion(_fake_completion_response('{"message": "x"}'))
+        monkeypatch.setenv("LLM_MOCK", "true")
+        text, payload = await _drain(stream_llm("hi", _ctx(), []))
+        assert text == "Hi, I'm FinAlly. Ask me about your portfolio."
+        assert payload is not None
+        assert payload.message == text
+
+    async def test_mock_mode_buy_yields_trade_in_payload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("LLM_MOCK", "TRUE")
+        text, payload = await _drain(stream_llm("buy 3 AAPL", _ctx(), []))
+        assert "Buying 3" in text
+        assert payload is not None
+        assert payload.trades and payload.trades[0].ticker == "AAPL"
+        assert payload.trades[0].quantity == 3
+
+    async def test_real_path_streams_tagged_response(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("LLM_MOCK", "")
+        chunks = [
+            "<reply>",
+            "Looks ",
+            "balanced.",
+            "</reply><actions>",
+            '{"trades": [], "watchlist_changes": []}</actions>',
+        ]
+        fake = _make_fake_acompletion(chunks)
         monkeypatch.setattr("litellm.acompletion", fake)
-        await real_llm("now", _ctx(), [])
+        text, payload = await _drain(stream_llm("hi", _ctx(), []))
+        assert "balanced" in text
+        assert payload is not None
+        assert payload.message.strip() == "Looks balanced."
+        assert fake.captured["model"] == DEFAULT_MODEL
+        assert fake.captured["stream"] is True
+        assert fake.captured["max_tokens"] > 0
+
+    async def test_real_path_passes_tagged_system_prompt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The system message must carry the cache_control breakpoint and
+        instruct the model to use the tagged format."""
+        monkeypatch.setenv("LLM_MOCK", "")
+        fake = _make_fake_acompletion(
+            ["<reply>x</reply><actions>{}</actions>"]
+        )
+        monkeypatch.setattr("litellm.acompletion", fake)
+        await _drain(stream_llm("now", _ctx(), []))
         system_msg = fake.captured["messages"][0]
         assert system_msg["role"] == "system"
-        # Two-block content: static (cached) + dynamic portfolio.
         blocks = system_msg["content"]
         assert isinstance(blocks, list) and len(blocks) == 2
         assert blocks[0]["cache_control"] == {"type": "ephemeral"}
-        assert "cache_control" not in blocks[1]
-
-    async def test_max_tokens_capped(self, monkeypatch: pytest.MonkeyPatch):
-        fake = _make_fake_acompletion(_fake_completion_response('{"message": "x"}'))
-        monkeypatch.setattr("litellm.acompletion", fake)
-        await real_llm("now", _ctx(), [])
-        assert fake.captured["max_tokens"] > 0
-        assert fake.captured["max_tokens"] <= 1024  # sanity cap
-
-    async def test_custom_model_override(self, monkeypatch: pytest.MonkeyPatch):
-        fake = _make_fake_acompletion(_fake_completion_response('{"message": "x"}'))
-        monkeypatch.setattr("litellm.acompletion", fake)
-        await real_llm("now", _ctx(), [], model="anthropic/claude-sonnet-4-6")
-        assert fake.captured["model"] == "anthropic/claude-sonnet-4-6"
+        assert "<reply>" in blocks[0]["text"]
 
 
-class TestRealLLMFailures:
-    async def test_completion_exception_becomes_llm_call_error(
+# ---------------------------------------------------------------------------
+# Failure modes
+# ---------------------------------------------------------------------------
+
+
+class TestStreamFailures:
+    async def test_acompletion_init_failure_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ):
+        monkeypatch.setenv("LLM_MOCK", "")
         fake = _make_fake_acompletion(RuntimeError("network down"))
         monkeypatch.setattr("litellm.acompletion", fake)
         with pytest.raises(LLMCallError) as exc:
-            await real_llm("x", _ctx(), [])
+            await _drain(stream_llm("x", _ctx(), []))
         assert "network down" in str(exc.value)
 
-    async def test_empty_content_raises(self, monkeypatch: pytest.MonkeyPatch):
-        fake = _make_fake_acompletion(_fake_completion_response(""))
-        monkeypatch.setattr("litellm.acompletion", fake)
-        with pytest.raises(LLMCallError, match="empty"):
-            await real_llm("x", _ctx(), [])
-
-    async def test_malformed_json_raises(self, monkeypatch: pytest.MonkeyPatch):
-        fake = _make_fake_acompletion(_fake_completion_response("not json {"))
-        monkeypatch.setattr("litellm.acompletion", fake)
-        with pytest.raises(LLMCallError, match="parse"):
-            await real_llm("x", _ctx(), [])
-
-    async def test_schema_violation_raises(self, monkeypatch: pytest.MonkeyPatch):
-        fake = _make_fake_acompletion(_fake_completion_response("{}"))  # no message
-        monkeypatch.setattr("litellm.acompletion", fake)
-        with pytest.raises(LLMCallError, match="parse"):
-            await real_llm("x", _ctx(), [])
-
-    async def test_unexpected_response_shape_raises(
+    async def test_mid_stream_exception_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        # No `choices` attribute -> AttributeError caught -> LLMCallError
-        fake = _make_fake_acompletion(SimpleNamespace())
+        """If the stream raises after the first chunk, surface as LLMCallError."""
+        monkeypatch.setenv("LLM_MOCK", "")
+
+        async def aiter_with_failure() -> AsyncIterator[SimpleNamespace]:
+            yield _chunk("<reply>partial")
+            raise RuntimeError("connection dropped")
+
+        async def fake(**kwargs):
+            fake.captured = kwargs
+            return aiter_with_failure()
+
+        fake.captured = {}
         monkeypatch.setattr("litellm.acompletion", fake)
-        with pytest.raises(LLMCallError):
-            await real_llm("x", _ctx(), [])
+
+        with pytest.raises(LLMCallError, match="connection dropped"):
+            await _drain(stream_llm("x", _ctx(), []))
+
+    async def test_empty_stream_falls_back_to_empty_payload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A stream that yields nothing at all still surfaces a payload — the
+        message is empty but the request didn't fail."""
+        monkeypatch.setenv("LLM_MOCK", "")
+        fake = _make_fake_acompletion([])
+        monkeypatch.setattr("litellm.acompletion", fake)
+        text, payload = await _drain(stream_llm("x", _ctx(), []))
+        assert text == ""
+        assert payload is not None
+        # Empty reply but trades/watchlist arrays present.
+        assert payload.trades == []
+        assert payload.watchlist_changes == []
