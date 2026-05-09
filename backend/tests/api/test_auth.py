@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-
 # --------------------------------------------------------------------------
 # Signup
 # --------------------------------------------------------------------------
@@ -211,7 +210,7 @@ class TestPerUserIsolation:
     def test_two_users_have_independent_portfolios(
         self, unauthed_client: TestClient, app
     ) -> None:
-        from fastapi.testclient import TestClient as _TC
+        from app.state import get_state
 
         # User A signs up + buys 5 AAPL.
         unauthed_client.post(
@@ -219,8 +218,6 @@ class TestPerUserIsolation:
             json={"username": "alpha", "password": "supersecret"},
         )
         # Seed a price so the trade can fill.
-        from app.state import get_state
-
         cache = get_state().price_cache
         assert cache is not None
         cache.update("AAPL", 100.0)
@@ -234,7 +231,7 @@ class TestPerUserIsolation:
         assert any(p["ticker"] == "AAPL" for p in a_portfolio["positions"])
 
         # User B signs up in a separate TestClient (separate cookie jar).
-        with _TC(app) as client_b:
+        with TestClient(app) as client_b:
             client_b.post(
                 "/api/auth/signup",
                 json={"username": "beta", "password": "supersecret"},

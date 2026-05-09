@@ -10,9 +10,12 @@ import { test, expect } from "../fixtures/app";
 test.describe("@auth", () => {
   test("authed user lands on the workstation, not the login form", async ({
     page,
+    testUsername: _,
   }) => {
+    // `testUsername` must be in the destructuring so the fixture runs and
+    // signs up our test user before navigation — otherwise we'd land on
+    // the login screen because the AuthGate would see no session cookie.
     await page.goto("/");
-    // The login form should not be present; the workstation should be.
     await expect(page.getByTestId("app-shell")).toBeVisible();
     await expect(page.getByTestId("login-form")).toHaveCount(0);
   });
