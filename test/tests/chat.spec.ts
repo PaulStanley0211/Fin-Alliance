@@ -13,6 +13,11 @@ test.describe("@chat mocked LLM", () => {
   }) => {
     await page.goto("/");
 
+    // Wait briefly so the simulator has a chance to push at least one tick
+    // for AAPL — the backend rejects trades with `price_unavailable` if the
+    // ticker has no current price yet, even on the LLM path.
+    await page.waitForTimeout(1500);
+
     await chat.send("buy 5 AAPL");
 
     // Loading bubble appears then disappears.
@@ -28,22 +33,40 @@ test.describe("@chat mocked LLM", () => {
     await expect(positions.quantity("AAPL")).toHaveText("5");
   });
 
-  test("'watch PYPL' adds PYPL to the watchlist via chat", async ({
+  test("'watch PYPL' is rejected with the watchlist-disabled chip", async ({
     page,
     chat,
-    watchlist,
   }) => {
+    // Per redesign §6 / §8, the LLM executor short-circuits any
+    // watchlist_changes action with `error: "watchlist_disabled"`. The
+    // ChatPanel renders these via a muted, italic, INDEX-BASED notice
+    // (`chat-watchlist-disabled-{N}`, where N starts at 0 and counts
+    // disabled chips across the conversation).
     await page.goto("/");
 
     await chat.send("watch PYPL");
     await expect(chat.loading).toBeHidden({ timeout: 15_000 });
 
-    const receipt = chat.watchlistAction("PYPL");
-    await expect(receipt).toBeVisible();
-    await expect(receipt).toHaveAttribute("data-status", "executed");
+    const chip = chat.nthWatchlistDisabled(0);
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText(/watchlist actions are disabled/i);
+  });
 
-    // Watchlist UI picked up the new ticker.
-    await expect(watchlist.row("PYPL")).toBeVisible();
+  test("'unwatch AAPL' is rejected with the watchlist-disabled chip", async ({
+    page,
+    chat,
+  }) => {
+    // Symmetric coverage for the remove path. The mock dispatch table
+    // (PLAN.md §9) emits a `watchlist_changes: [{action: "remove"}]` entry,
+    // which the executor short-circuits identically.
+    await page.goto("/");
+
+    await chat.send("unwatch AAPL");
+    await expect(chat.loading).toBeHidden({ timeout: 15_000 });
+
+    const chip = chat.nthWatchlistDisabled(0);
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText(/watchlist actions are disabled/i);
   });
 
   test("conversational greeting returns a non-empty assistant turn", async ({

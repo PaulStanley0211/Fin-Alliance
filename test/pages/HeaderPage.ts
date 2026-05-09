@@ -34,6 +34,24 @@ export class HeaderPage extends BasePage {
     return "unknown";
   }
 
+  // Theme toggle (redesign spec §10). Persists to localStorage under
+  // `finally:theme` and writes `data-theme="light|dark"` on <html>.
+  get themeToggle(): Locator {
+    return this.byTestId("header-theme-toggle");
+  }
+
+  async clickThemeToggle(): Promise<void> {
+    await this.themeToggle.click();
+  }
+
+  async currentTheme(): Promise<"light" | "dark" | "unknown"> {
+    const value = await this.page
+      .locator("html")
+      .getAttribute("data-theme");
+    if (value === "light" || value === "dark") return value;
+    return "unknown";
+  }
+
   /**
    * Parses a "$10,000.00" formatted PriceFlash value into a number, or null
    * when the metric renders the placeholder "—".

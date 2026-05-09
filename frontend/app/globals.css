@@ -7,25 +7,155 @@
     --font-display: "Fraunces", "Source Serif Pro", Georgia, serif;
     --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
     --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
 
-    /* Color tokens — also exposed as CSS vars for chart libraries that don't use Tailwind */
+  /*
+   * Theme tokens are exposed in two forms:
+   *   --foo: <plain css color>      → used by raw `style="color: var(--foo)"` and chart libs
+   *   --foo-rgb: "<r>, <g>, <b>"    → used by Tailwind utilities so opacity modifiers
+   *                                    (`bg-bg-1/80`) keep working across themes
+   */
+  :root,
+  :root[data-theme="dark"] {
     --bg-0: #0d1117;
+    --bg-0-rgb: 13, 17, 23;
     --bg-1: #11161f;
+    --bg-1-rgb: 17, 22, 31;
     --bg-2: #161c27;
+    --bg-2-rgb: 22, 28, 39;
     --bg-3: #1a1a2e;
+    --bg-3-rgb: 26, 26, 46;
     --bg-4: #222a38;
+    --bg-4-rgb: 34, 42, 56;
+
     --line: #222a38;
+    --line-rgb: 34, 42, 56;
     --line-soft: #1b2230;
+    --line-soft-rgb: 27, 34, 48;
     --line-strong: #2d3a4e;
+    --line-strong-rgb: 45, 58, 78;
+
     --ink-0: #e6edf3;
+    --ink-0-rgb: 230, 237, 243;
     --ink-1: #a8b3c1;
+    --ink-1-rgb: 168, 179, 193;
     --ink-2: #6e7a8a;
+    --ink-2-rgb: 110, 122, 138;
     --ink-3: #4a5363;
+    --ink-3-rgb: 74, 83, 99;
+
     --accent: #ecad0a;
+    --accent-rgb: 236, 173, 10;
+    --accent-dim: #b8870a;
+    --accent-dim-rgb: 184, 135, 10;
+    --accent-glow: #fbd34d;
+    --accent-glow-rgb: 251, 211, 77;
+
     --primary: #209dd7;
+    --primary-rgb: 32, 157, 215;
+    --primary-dim: #1a7faf;
+    --primary-dim-rgb: 26, 127, 175;
+    --primary-glow: #62c2ee;
+    --primary-glow-rgb: 98, 194, 238;
+
     --secondary: #753991;
+    --secondary-rgb: 117, 57, 145;
+    --secondary-dim: #5a2c70;
+    --secondary-dim-rgb: 90, 44, 112;
+    --secondary-glow: #a060c0;
+    --secondary-glow-rgb: 160, 96, 192;
+
     --up: #26d086;
+    --up-rgb: 38, 208, 134;
+    --up-dim: #1a8857;
+    --up-dim-rgb: 26, 136, 87;
+    --up-glow-rgb: 38, 208, 134;
+
     --down: #f0506e;
+    --down-rgb: 240, 80, 110;
+    --down-dim: #a3354b;
+    --down-dim-rgb: 163, 53, 75;
+    --down-glow-rgb: 240, 80, 110;
+
+    --flat: #6e7a8a;
+    --flat-rgb: 110, 122, 138;
+
+    --ambient-grid-rgb: 34, 42, 56;
+    --ambient-grid-alpha: 0.18;
+    --selection-bg: rgba(236, 173, 10, 0.35);
+    --scrollbar-thumb: rgba(74, 83, 99, 0.4);
+    --scrollbar-thumb-hover: rgba(74, 83, 99, 0.7);
+  }
+
+  :root[data-theme="light"] {
+    --bg-0: #f4f1ea;
+    --bg-0-rgb: 244, 241, 234;
+    --bg-1: #ffffff;
+    --bg-1-rgb: 255, 255, 255;
+    --bg-2: #f0ebe1;
+    --bg-2-rgb: 240, 235, 225;
+    --bg-3: #ece6d8;
+    --bg-3-rgb: 236, 230, 216;
+    --bg-4: #e5dfd1;
+    --bg-4-rgb: 229, 223, 209;
+
+    --line: #c4bcab;
+    --line-rgb: 196, 188, 171;
+    --line-soft: #d9d2c4;
+    --line-soft-rgb: 217, 210, 196;
+    --line-strong: #aea48f;
+    --line-strong-rgb: 174, 164, 143;
+
+    --ink-0: #1a1a2e;
+    --ink-0-rgb: 26, 26, 46;
+    --ink-1: #3d3d52;
+    --ink-1-rgb: 61, 61, 82;
+    --ink-2: #6b6b7a;
+    --ink-2-rgb: 107, 107, 122;
+    --ink-3: #9a9aa8;
+    --ink-3-rgb: 154, 154, 168;
+
+    --accent: #c98e08;
+    --accent-rgb: 201, 142, 8;
+    --accent-dim: #a47306;
+    --accent-dim-rgb: 164, 115, 6;
+    --accent-glow: #e8b53a;
+    --accent-glow-rgb: 232, 181, 58;
+
+    --primary: #1080b8;
+    --primary-rgb: 16, 128, 184;
+    --primary-dim: #0c6491;
+    --primary-dim-rgb: 12, 100, 145;
+    --primary-glow: #4ba6d4;
+    --primary-glow-rgb: 75, 166, 212;
+
+    --secondary: #5e2b75;
+    --secondary-rgb: 94, 43, 117;
+    --secondary-dim: #471f59;
+    --secondary-dim-rgb: 71, 31, 89;
+    --secondary-glow: #8854a0;
+    --secondary-glow-rgb: 136, 84, 160;
+
+    --up: #1d7a3e;
+    --up-rgb: 29, 122, 62;
+    --up-dim: #155a2d;
+    --up-dim-rgb: 21, 90, 45;
+    --up-glow-rgb: 29, 122, 62;
+
+    --down: #b04030;
+    --down-rgb: 176, 64, 48;
+    --down-dim: #84301e;
+    --down-dim-rgb: 132, 48, 30;
+    --down-glow-rgb: 176, 64, 48;
+
+    --flat: #6b6b7a;
+    --flat-rgb: 107, 107, 122;
+
+    --ambient-grid-rgb: 196, 188, 171;
+    --ambient-grid-alpha: 0.28;
+    --selection-bg: rgba(201, 142, 8, 0.28);
+    --scrollbar-thumb: rgba(110, 110, 122, 0.35);
+    --scrollbar-thumb-hover: rgba(110, 110, 122, 0.6);
   }
 
   html,
@@ -34,19 +164,18 @@
     background-color: var(--bg-0);
     color: var(--ink-0);
     font-family: var(--font-sans);
-    font-feature-settings: "ss01", "cv11"; /* refined glyph variants when font supports them */
+    font-feature-settings: "ss01", "cv11";
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
   }
 
   body {
-    /* Ambient depth — a faint vignette + grid behind everything, never pure black */
     background-image:
-      radial-gradient(ellipse 80% 60% at 50% -10%, rgba(32, 157, 215, 0.08), transparent 70%),
-      radial-gradient(ellipse 60% 40% at 90% 100%, rgba(117, 57, 145, 0.06), transparent 70%),
-      linear-gradient(to right, rgba(34, 42, 56, 0.18) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(34, 42, 56, 0.18) 1px, transparent 1px);
+      radial-gradient(ellipse 80% 60% at 50% -10%, rgba(var(--primary-rgb), 0.08), transparent 70%),
+      radial-gradient(ellipse 60% 40% at 90% 100%, rgba(var(--secondary-rgb), 0.06), transparent 70%),
+      linear-gradient(to right, rgba(var(--ambient-grid-rgb), var(--ambient-grid-alpha)) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(var(--ambient-grid-rgb), var(--ambient-grid-alpha)) 1px, transparent 1px);
     background-size:
       auto,
       auto,
@@ -55,7 +184,6 @@
     background-attachment: fixed;
   }
 
-  /* Tabular numbers everywhere data is shown */
   .tabular,
   table,
   .font-mono {
@@ -63,11 +191,10 @@
   }
 
   ::selection {
-    background-color: rgba(236, 173, 10, 0.35);
+    background-color: var(--selection-bg);
     color: var(--ink-0);
   }
 
-  /* Refined scrollbar — visible but restrained */
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -76,16 +203,15 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(74, 83, 99, 0.4);
+    background: var(--scrollbar-thumb);
     border-radius: 4px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(74, 83, 99, 0.7);
+    background: var(--scrollbar-thumb-hover);
   }
 }
 
 @layer components {
-  /* Panel chrome — used everywhere to give the terminal-grid feel */
   .panel {
     @apply bg-bg-1/80 border border-line-soft rounded-panel;
     backdrop-filter: blur(6px);
@@ -95,24 +221,20 @@
     @apply bg-bg-2 border border-line rounded-panel;
   }
 
-  /* Eyebrow label above panels — uppercase, wide-tracked, mono */
   .eyebrow {
     @apply font-mono text-2xs uppercase text-ink-2;
     letter-spacing: 0.18em;
   }
 
-  /* Section divider — used between header strip and grid */
   .hairline {
     @apply h-px w-full bg-line-soft;
   }
 
-  /* Tabular data cell baseline */
   .data-cell {
     @apply font-mono text-tabular text-ink-0;
     font-variant-numeric: tabular-nums;
   }
 
-  /* Buttons */
   .btn {
     @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 font-mono text-xs uppercase tracking-terminal
            border rounded-sharp transition-colors duration-150 select-none;
@@ -134,21 +256,18 @@
     @apply btn border-line hover:border-line-strong text-ink-1 hover:text-ink-0;
   }
 
-  /* Inputs */
   .input {
     @apply font-mono text-sm bg-bg-0 border border-line rounded-sharp px-2.5 py-1.5
            text-ink-0 placeholder:text-ink-3 outline-none
            focus:border-primary/60 focus:ring-1 focus:ring-primary/30 transition-colors;
   }
 
-  /* Status dot */
   .status-dot {
     @apply inline-block w-2 h-2 rounded-full;
   }
 }
 
 @layer utilities {
-  /* Price flash classes — applied transiently when a price ticks. Animation auto-removes. */
   .flash-up {
     animation: flash-up 500ms ease-out;
   }
@@ -156,10 +275,26 @@
     animation: flash-down 500ms ease-out;
   }
 
-  /* When market is closed — globally suppress flashes via a body-level class */
   .market-closed .flash-up,
   .market-closed .flash-down {
     animation: none !important;
+  }
+
+  @keyframes flash-up {
+    0% {
+      background-color: rgba(var(--up-rgb), 0.32);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+  @keyframes flash-down {
+    0% {
+      background-color: rgba(var(--down-rgb), 0.32);
+    }
+    100% {
+      background-color: transparent;
+    }
   }
 
   .text-up {
@@ -172,22 +307,21 @@
     color: var(--ink-2);
   }
 
-  /* Diagonal stripe pattern for "closed" state overlays */
   .stripe-closed {
     background-image: repeating-linear-gradient(
       45deg,
-      rgba(110, 122, 138, 0.06) 0,
-      rgba(110, 122, 138, 0.06) 6px,
+      rgba(var(--ink-0-rgb), 0.05) 0,
+      rgba(var(--ink-0-rgb), 0.05) 6px,
       transparent 6px,
       transparent 12px
     );
   }
 
   .glow-primary {
-    box-shadow: 0 0 0 1px rgba(32, 157, 215, 0.4), 0 0 18px rgba(32, 157, 215, 0.25);
+    box-shadow: 0 0 0 1px rgba(var(--primary-rgb), 0.4), 0 0 18px rgba(var(--primary-rgb), 0.25);
   }
 
   .glow-accent {
-    box-shadow: 0 0 0 1px rgba(236, 173, 10, 0.4), 0 0 18px rgba(236, 173, 10, 0.2);
+    box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.4), 0 0 18px rgba(var(--accent-rgb), 0.2);
   }
 }

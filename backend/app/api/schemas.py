@@ -120,6 +120,22 @@ class WatchlistAddRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------
+# Sectors
+# --------------------------------------------------------------------------
+
+
+class SectorEntry(BaseModel):
+    id: str
+    label: str
+    tickers: list[str]
+
+
+class SectorsResponse(BaseModel):
+    version: str
+    sectors: list[SectorEntry]
+
+
+# --------------------------------------------------------------------------
 # Health
 # --------------------------------------------------------------------------
 
@@ -127,4 +143,4 @@ class WatchlistAddRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok", "error"]
     db: Literal["ready", "error"]
-    market_data: Literal["running", "warming", "error"]
+    market_data: Literal["running", "warming", "closed", "error"]

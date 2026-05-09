@@ -2,6 +2,11 @@
 
 We never make a real Anthropic call here — the real path is exercised by
 patching `litellm.completion`.
+
+Note on env handling: LiteLLM eagerly loads the project-root `.env` on
+import, which sets `LLM_MOCK=true`. The conftest's autouse fixture also
+sets it. Tests that need the real-llm dispatch path must `delenv` after
+import time and force `LLM_MOCK=` (empty) to defeat both layers.
 """
 
 from __future__ import annotations
@@ -37,7 +42,10 @@ class TestDispatch:
         assert r.trades and r.trades[0].ticker == "AAPL"
 
     def test_mock_mode_off_calls_real(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv("LLM_MOCK", raising=False)
+        # `setenv("")` defeats both the conftest autouse fixture and any
+        # `LLM_MOCK=true` leaked from the project-root `.env` (loaded by
+        # LiteLLM at import time).
+        monkeypatch.setenv("LLM_MOCK", "")
 
         called = {}
 

@@ -23,11 +23,13 @@ Your responsibilities:
   has explicitly agreed to a specific suggestion in this turn.
   Casual questions ("is my portfolio risky?", "what do you think of NVDA?")
   must return analysis only with an empty `trades` array.
-- Manage the watchlist proactively: add/remove suggestions are lower-stakes
-  than trades and may be made in response to clear contextual signals
-  (e.g. "I'm curious about X").
 - Be concise and data-driven.
 - Always respond with valid JSON matching the required schema.
+
+All sector tickers stream live by default — there is no user-managed watchlist.
+Always return an empty `watchlist_changes` array. If the user asks to add or
+remove a ticker from a watchlist, briefly explain that watchlist management
+is no longer needed and refocus on portfolio analysis or trades.
 
 The user has $10,000 of *simulated* cash. Trades are market orders, instant fill,
 no fees. Trades you emit auto-execute without confirmation.
@@ -42,15 +44,12 @@ Total portfolio value: ${total:.2f}
 
 Positions ({n_positions}):
 {positions_block}
-
-Watchlist ({n_watchlist}):
-{watchlist_block}
 === END PORTFOLIO ===
 
 Respond with JSON of shape:
-{{"message": "...", "trades": [{{"ticker": "AAPL", "side": "buy", "quantity": 10}}], "watchlist_changes": [{{"ticker": "PYPL", "action": "add"}}]}}
+{{"message": "...", "trades": [{{"ticker": "AAPL", "side": "buy", "quantity": 10}}], "watchlist_changes": []}}
 
-Both `trades` and `watchlist_changes` may be empty arrays."""
+`watchlist_changes` MUST be empty. `trades` may be empty."""
 
 
 def _format_positions(ctx: PortfolioContext) -> str:
@@ -66,16 +65,6 @@ def _format_positions(ctx: PortfolioContext) -> str:
     return "\n".join(lines)
 
 
-def _format_watchlist(ctx: PortfolioContext) -> str:
-    if not ctx.watchlist:
-        return "  (none)"
-    lines = []
-    for w in ctx.watchlist:
-        price = f"${w.current_price:.2f}" if w.current_price is not None else "—"
-        lines.append(f"  {w.ticker}: {price}")
-    return "\n".join(lines)
-
-
 def build_system_prompt(ctx: PortfolioContext) -> str:
     """Render the system prompt with the user's current portfolio state."""
     return SYSTEM_PROMPT_TEMPLATE.format(
@@ -83,8 +72,6 @@ def build_system_prompt(ctx: PortfolioContext) -> str:
         total=ctx.total_value,
         n_positions=len(ctx.positions),
         positions_block=_format_positions(ctx),
-        n_watchlist=len(ctx.watchlist),
-        watchlist_block=_format_watchlist(ctx),
     )
 
 

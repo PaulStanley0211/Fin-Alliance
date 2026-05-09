@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import { ConnectionDot } from "@/components/layout/ConnectionDot";
 import { PriceFlash } from "@/components/common/PriceFlash";
 import { usePortfolio } from "@/lib/portfolio";
 import { useSseState } from "@/lib/sse";
+import { hydrateTheme, useTheme, type Theme } from "@/lib/theme";
 import type { MarketStatus } from "@/lib/types";
 
 /**
@@ -22,6 +23,15 @@ import type { MarketStatus } from "@/lib/types";
 export function HeaderBar() {
   const portfolio = usePortfolio();
   const sse = useSseState();
+  const { theme, toggleTheme } = useTheme();
+
+  // Hydrate the theme store from localStorage / prefers-color-scheme on
+  // first mount. The inline <script> in app/layout.tsx already applied the
+  // result to <html data-theme="...">, but the React store starts at "dark"
+  // — this syncs it.
+  useEffect(() => {
+    hydrateTheme();
+  }, []);
 
   const cash = portfolio.data?.cash_balance ?? null;
   const totalValue = portfolio.liveTotalValue;
@@ -90,8 +100,78 @@ export function HeaderBar() {
       <div className="flex items-center gap-3 px-5 border-l border-line-soft min-w-[260px]">
         <MarketStatusBadge status={marketStatus} />
         <ConnectionDot />
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </div>
     </header>
+  );
+}
+
+function ThemeToggle({
+  theme,
+  onToggle,
+}: {
+  theme: Theme;
+  onToggle: () => void;
+}) {
+  const next = theme === "dark" ? "light" : "dark";
+  const label = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={label}
+      title={label}
+      className="inline-flex items-center justify-center w-7 h-7 rounded-sharp border border-line-soft text-ink-1 hover:text-ink-0 hover:border-line-strong bg-bg-2/40 transition-colors"
+      data-testid="header-theme-toggle"
+      data-theme={theme}
+      data-next-theme={next}
+    >
+      {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+    </button>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2" />
+      <path d="M12 20v2" />
+      <path d="m4.93 4.93 1.41 1.41" />
+      <path d="m17.66 17.66 1.41 1.41" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+      <path d="m4.93 19.07 1.41-1.41" />
+      <path d="m17.66 6.34 1.41-1.41" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
   );
 }
 

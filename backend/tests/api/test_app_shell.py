@@ -24,14 +24,17 @@ def test_lifespan_initializes_state(client: TestClient) -> None:
     assert state.snapshot_writer is not None
 
 
-def test_lifespan_persisted_watchlist_seeded(client: TestClient, db_file: Path) -> None:
-    """init_db seeds 10 default tickers; market source should be tracking them."""
+def test_lifespan_starts_all_sector_tickers(client: TestClient, db_file: Path) -> None:
+    """All 50 sector tickers stream from boot — no per-user watchlist."""
     state = get_state()
     assert state.market_source is not None
     tickers = state.market_source.get_tickers()
-    assert len(tickers) == 10
-    assert "AAPL" in tickers
-    assert "NFLX" in tickers
+    assert len(tickers) == 50
+    # Spot-check one ticker from each sector.
+    for expected in ("AAPL", "UNH", "JPM", "WMT", "XOM"):
+        assert expected in tickers
+    # Materials was dropped in v1.1; LIN should not be subscribed.
+    assert "LIN" not in tickers
 
 
 def test_sse_endpoint_registered(app) -> None:

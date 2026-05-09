@@ -1,61 +1,65 @@
 import { test, expect } from "../fixtures/app";
 import { resetBackendState } from "../fixtures/reset";
 
+async function waitForPrice(
+  page: import("@playwright/test").Page,
+  ticker: string,
+) {
+  await expect
+    .poll(
+      async () => {
+        const text = (await page
+          .getByTestId(`sector-row-price-${ticker}`)
+          .innerText()).trim();
+        return text.length > 0 && text !== "—" && /\d/.test(text);
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+}
+
 test.describe("@charts portfolio visualizations", () => {
   test.beforeEach(async ({ request }) => {
     await resetBackendState(request);
   });
 
-  test("holdings list renders a row after a buy with weight + P&L data", async ({
+  test("heatmap renders a cell after a buy with rail direction + P&L label", async ({
     page,
     tradeBar,
-    charts,
+    heatmap,
   }) => {
     await page.goto("/");
+    await waitForPrice(page, "AAPL");
     await tradeBar.buy("AAPL", 2);
 
-    await expect(charts.holdingsList).toBeVisible();
-    await expect(charts.holdingsRow("AAPL")).toBeVisible();
+    await expect(heatmap.region).toBeVisible();
+    await expect(heatmap.cell("AAPL")).toBeVisible();
 
-    // Per-row data attributes per the new contract: weight is 0..1.
-    const weight = await charts
-      .holdingsWeight("AAPL")
-      .getAttribute("data-weight");
-    expect(weight, "holdings-weight cell should carry data-weight").toBeTruthy();
-    const w = Number(weight);
-    expect(Number.isFinite(w)).toBe(true);
-    expect(w).toBeGreaterThan(0);
-    expect(w).toBeLessThanOrEqual(1);
+    // Per redesign §9 the rail carries data-direction (up|down|flat).
+    const direction = await heatmap.direction("AAPL");
+    expect(["up", "down", "flat"]).toContain(direction);
 
-    // Value + P&L cells render non-empty text.
-    await expect(charts.holdingsValue("AAPL")).toBeVisible();
-    await expect(charts.holdingsPnl("AAPL")).toBeVisible();
-    const valueText = (await charts.holdingsValue("AAPL").innerText()).trim();
-    expect(valueText.length).toBeGreaterThan(0);
+    // P&L numeric label renders non-empty text.
+    await expect(heatmap.pnl("AAPL")).toBeVisible();
+    const pnlText = (await heatmap.pnl("AAPL").innerText()).trim();
+    expect(pnlText.length).toBeGreaterThan(0);
   });
 
-  test("holdings rows are sorted by market value descending", async ({
+  test("heatmap renders one cell per open position", async ({
     page,
     tradeBar,
-    charts,
+    heatmap,
   }) => {
     await page.goto("/");
 
-    // NVDA (~$800) is much larger than V (~$280); buying 1 share of each
-    // means NVDA should appear first regardless of any tick-level drift.
+    // NVDA (~$800) and V (~$280) — both should land cells in the heatmap.
+    await waitForPrice(page, "NVDA");
     await tradeBar.buy("NVDA", 1);
-    await expect(charts.holdingsRow("NVDA")).toBeVisible();
+    await expect(heatmap.cell("NVDA")).toBeVisible();
+
+    await waitForPrice(page, "V");
     await tradeBar.buy("V", 1);
-    await expect(charts.holdingsRow("V")).toBeVisible();
-
-    const tickers = await charts.holdingsRows.evaluateAll((rows) =>
-      rows
-        .map((el) => el.getAttribute("data-testid") ?? "")
-        .map((id) => id.replace(/^holdings-row-/, "")),
-    );
-
-    expect(tickers.length).toBeGreaterThanOrEqual(2);
-    expect(tickers.indexOf("NVDA")).toBeLessThan(tickers.indexOf("V"));
+    await expect(heatmap.cell("V")).toBeVisible();
   });
 
   test("P&L chart renders; range selector switches the active button", async ({
@@ -66,7 +70,7 @@ test.describe("@charts portfolio visualizations", () => {
 
     await expect(charts.pnlChart).toBeVisible();
 
-    // Default is 1d per §10. Click each range and confirm the buttons exist.
+    // Default is 1d per spec. Click each range and confirm the buttons exist.
     // Canvas data points aren't asserted (Lightweight Charts renders to
     // canvas; no DOM to inspect).
     await charts.pnlRangeButton("1h").click();

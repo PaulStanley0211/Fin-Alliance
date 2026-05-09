@@ -62,45 +62,6 @@ def update_cash_balance(
 
 
 # --------------------------------------------------------------------------
-# watchlist
-# --------------------------------------------------------------------------
-
-
-def list_watchlist(conn: sqlite3.Connection, user_id: str = DEFAULT_USER_ID) -> list[str]:
-    """Return tickers on the user's watchlist, alphabetical."""
-    rows = conn.execute(
-        "SELECT ticker FROM watchlist WHERE user_id = ? ORDER BY ticker", (user_id,)
-    ).fetchall()
-    return [r["ticker"] for r in rows]
-
-
-def add_to_watchlist(
-    conn: sqlite3.Connection, ticker: str, user_id: str = DEFAULT_USER_ID
-) -> bool:
-    """Add a ticker to the watchlist. Returns True if added, False if already present."""
-    try:
-        conn.execute(
-            "INSERT INTO watchlist (id, user_id, ticker, added_at) VALUES (?, ?, ?, ?)",
-            (str(uuid.uuid4()), user_id, ticker, _now_iso()),
-        )
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-
-
-def remove_from_watchlist(
-    conn: sqlite3.Connection, ticker: str, user_id: str = DEFAULT_USER_ID
-) -> bool:
-    """Remove a ticker from the watchlist. Returns True if a row was deleted."""
-    cur = conn.execute(
-        "DELETE FROM watchlist WHERE user_id = ? AND ticker = ?", (user_id, ticker)
-    )
-    conn.commit()
-    return cur.rowcount > 0
-
-
-# --------------------------------------------------------------------------
 # positions
 # --------------------------------------------------------------------------
 

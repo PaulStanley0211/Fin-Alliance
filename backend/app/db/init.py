@@ -17,10 +17,6 @@ from .connection import connect, db_path
 
 DEFAULT_USER_ID = "default"
 DEFAULT_CASH_BALANCE = 10_000.0
-DEFAULT_TICKERS: tuple[str, ...] = (
-    "AAPL", "GOOGL", "MSFT", "AMZN", "TSLA",
-    "NVDA", "META", "JPM", "V", "NFLX",
-)
 
 DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
@@ -66,7 +62,6 @@ def init_db(path: Path | str | None = None) -> Path:
 
 def _seed_defaults(conn: sqlite3.Connection) -> None:
     _seed_user(conn)
-    _seed_watchlist(conn)
     _seed_anchor_snapshot(conn)
 
 
@@ -79,19 +74,6 @@ def _seed_user(conn: sqlite3.Connection) -> None:
             "INSERT INTO users_profile (id, cash_balance, created_at) VALUES (?, ?, ?)",
             (DEFAULT_USER_ID, DEFAULT_CASH_BALANCE, _now_iso()),
         )
-
-
-def _seed_watchlist(conn: sqlite3.Connection) -> None:
-    count = conn.execute(
-        "SELECT COUNT(*) AS n FROM watchlist WHERE user_id = ?", (DEFAULT_USER_ID,)
-    ).fetchone()["n"]
-    if count > 0:
-        return
-    now = _now_iso()
-    conn.executemany(
-        "INSERT INTO watchlist (id, user_id, ticker, added_at) VALUES (?, ?, ?, ?)",
-        [(str(uuid.uuid4()), DEFAULT_USER_ID, t, now) for t in DEFAULT_TICKERS],
-    )
 
 
 def _seed_anchor_snapshot(conn: sqlite3.Connection) -> None:

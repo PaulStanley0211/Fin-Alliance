@@ -8,14 +8,6 @@ CREATE TABLE IF NOT EXISTS users_profile (
     created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS watchlist (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'default',
-    ticker TEXT NOT NULL,
-    added_at TEXT NOT NULL,
-    UNIQUE (user_id, ticker)
-);
-
 CREATE TABLE IF NOT EXISTS positions (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL DEFAULT 'default',

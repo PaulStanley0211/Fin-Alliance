@@ -30,22 +30,17 @@ from fastapi.staticfiles import StaticFiles
 from app.db import (
     SnapshotWriter,
     init_db,
-    list_watchlist,
 )
-from app.db.connection import connect
 from app.market import (
     PriceCache,
-    create_market_data_source,
     create_stream_router,
 )
+from app.market.factory import create_and_start
+from app.market.sectors import ALL_SECTOR_TICKERS
 from app.state import AppState, get_state
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TICKERS = [
-    "AAPL", "GOOGL", "MSFT", "AMZN", "TSLA",
-    "NVDA", "META", "JPM", "V", "NFLX",
-]
 STATIC_DIR = Path(os.environ.get("FINALLY_STATIC_DIR", "/app/static"))
 TICK_WATCHER_INTERVAL = 0.5
 
@@ -87,15 +82,12 @@ async def lifespan(app: FastAPI):
     state.db_ready = True
     logger.info("Database initialized")
 
-    # 2. Start the market data source against the pre-built cache.
-    # Tickers = persisted watchlist (init_db has already inserted defaults).
-    with connect() as conn:
-        persisted = list_watchlist(conn)
-    tickers = persisted if persisted else list(DEFAULT_TICKERS)
+    # 2. Start the market data source against the cache.
+    # Tickers = full sector taxonomy (50 tickers, all sectors stream live).
     cache = state.price_cache
     assert cache is not None  # constructed at import time
-    source = create_market_data_source(cache)
-    await source.start(tickers)
+    tickers = list(ALL_SECTOR_TICKERS)
+    source = await create_and_start(cache, tickers)
     state.market_source = source
     logger.info("Market data source started with %d tickers", len(tickers))
 
@@ -181,7 +173,8 @@ def _mount_rest_routers(app: FastAPI) -> None:
     for module_name, attr in (
         ("app.api.health", "router"),
         ("app.api.portfolio", "router"),
-        ("app.api.watchlist", "router"),
+        ("app.api.sectors", "router"),
+        ("app.api.history", "router"),
         ("app.llm.chat", "router"),
     ):
         try:

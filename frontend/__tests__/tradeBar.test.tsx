@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 
 import { TradeBar } from "@/components/trade/TradeBar";
 import { __internals as portfolioInternals } from "@/lib/portfolio";
-import { __internals as watchlistInternals } from "@/lib/watchlist";
+import { setSelectedTicker, __resetSelection } from "@/lib/selection";
 
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   portfolioInternals.store.__reset();
-  watchlistInternals.store.__reset();
+  __resetSelection();
 });
 
 interface Capture {
@@ -61,23 +61,133 @@ const portfolioPayload = {
   total_value: 10955,
   realized_pnl: 0,
 };
-const watchlistPayload = { tickers: [] };
 
 afterEach(() => {
   globalThis.fetch = realFetch;
   vi.restoreAllMocks();
 });
 
-describe("TradeBar", () => {
-  beforeEach(() => {
-    // baseline routing — overridden per test
+function selectAAPL() {
+  act(() => {
+    setSelectedTicker("AAPL");
+  });
+}
+
+function tradeOk(): Response {
+  return jsonResponse({
+    id: "t1",
+    ticker: "AAPL",
+    side: "buy",
+    quantity: 1,
+    price: 191,
+    cost_basis: 191,
+    executed_at: "2026-05-08T12:00:00Z",
+    cash_balance: 9809,
+    position_quantity: 6,
+  });
+}
+
+describe("TradeBar — empty state and stepper", () => {
+  it("shows the empty-state message when no ticker is selected", () => {
+    mockFetch(({ url }) => {
+      if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
+      return jsonResponse({}, 404);
+    });
+
+    render(<TradeBar />);
+    expect(screen.getByTestId("trade-empty-state")).toHaveTextContent(
+      /select a ticker from the watchlist to trade/i,
+    );
+    expect(screen.queryByTestId("trade-ticker")).toBeNull();
+    expect(screen.queryByTestId("trade-qty")).toBeNull();
   });
 
+  it("renders ticker label and the stepper once a ticker is selected", () => {
+    mockFetch(({ url }) => {
+      if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
+      return jsonResponse({}, 404);
+    });
+
+    render(<TradeBar />);
+    selectAAPL();
+
+    expect(screen.getByTestId("trade-ticker")).toHaveTextContent("AAPL");
+    const qty = screen.getByTestId("trade-qty") as HTMLInputElement;
+    expect(qty.value).toBe("1");
+    expect(screen.getByTestId("trade-qty-minus")).toBeInTheDocument();
+    expect(screen.getByTestId("trade-qty-plus")).toBeInTheDocument();
+  });
+
+  it("+ increments and − decrements; minus disabled at qty=1", () => {
+    mockFetch(({ url }) => {
+      if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
+      return jsonResponse({}, 404);
+    });
+
+    render(<TradeBar />);
+    selectAAPL();
+
+    const qty = screen.getByTestId("trade-qty") as HTMLInputElement;
+    const plus = screen.getByTestId("trade-qty-plus") as HTMLButtonElement;
+    const minus = screen.getByTestId("trade-qty-minus") as HTMLButtonElement;
+
+    expect(qty.value).toBe("1");
+    expect(minus.disabled).toBe(true);
+
+    fireEvent.click(plus);
+    fireEvent.click(plus);
+    fireEvent.click(plus);
+    expect(qty.value).toBe("4");
+    expect(minus.disabled).toBe(false);
+
+    fireEvent.click(minus);
+    expect(qty.value).toBe("3");
+  });
+
+  it("clamps typed quantity to integer min=1", () => {
+    mockFetch(({ url }) => {
+      if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
+      return jsonResponse({}, 404);
+    });
+
+    render(<TradeBar />);
+    selectAAPL();
+    const qty = screen.getByTestId("trade-qty") as HTMLInputElement;
+
+    fireEvent.change(qty, { target: { value: "0" } });
+    expect(qty.value).toBe("1"); // clamped
+
+    fireEvent.change(qty, { target: { value: "12" } });
+    expect(qty.value).toBe("12");
+  });
+
+  it("Buy and Sell appear below the qty stepper as a 2-column row", () => {
+    mockFetch(({ url }) => {
+      if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
+      return jsonResponse({}, 404);
+    });
+
+    render(<TradeBar />);
+    selectAAPL();
+
+    const qty = screen.getByTestId("trade-qty");
+    const buy = screen.getByTestId("trade-buy");
+    const sell = screen.getByTestId("trade-sell");
+
+    const order = [qty, buy, sell];
+    for (let i = 0; i < order.length - 1; i++) {
+      // eslint-disable-next-line no-bitwise
+      const cmp = order[i].compareDocumentPosition(order[i + 1]);
+      expect(cmp & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+});
+
+describe("TradeBar — submit + idempotency", () => {
   it("disables Buy/Sell while a trade is in flight, then re-enables", async () => {
     let resolveTrade: ((res: Response) => void) | null = null;
     mockFetch(({ url }) => {
       if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
-      if (url === "/api/watchlist") return jsonResponse(watchlistPayload);
       if (url === "/api/portfolio/trade") {
         return new Promise<Response>((resolve) => {
           resolveTrade = resolve;
@@ -87,38 +197,19 @@ describe("TradeBar", () => {
     });
 
     render(<TradeBar />);
-    fireEvent.change(screen.getByTestId("trade-ticker"), { target: { value: "AAPL" } });
-    fireEvent.change(screen.getByTestId("trade-quantity"), { target: { value: "1" } });
+    selectAAPL();
 
     const buy = screen.getByTestId("trade-buy") as HTMLButtonElement;
     const sell = screen.getByTestId("trade-sell") as HTMLButtonElement;
-
     expect(buy.disabled).toBe(false);
-    fireEvent.click(buy);
 
-    // While the trade is pending, *both* sides must be disabled.
+    fireEvent.click(buy);
     await waitFor(() => expect(buy.disabled).toBe(true));
     expect(sell.disabled).toBe(true);
 
-    resolveTrade!(
-      jsonResponse({
-        id: "t1",
-        ticker: "AAPL",
-        side: "buy",
-        quantity: 1,
-        price: 191.5,
-        cost_basis: 191.5,
-        executed_at: "2026-05-08T12:00:00Z",
-        cash_balance: 9808.5,
-        position_quantity: 6,
-      }),
-    );
+    resolveTrade!(tradeOk());
 
-    // After the trade settles, the bar clears qty (success UX). Re-fill to
-    // confirm the buttons enable again — the disabled-while-flight contract
-    // is satisfied as long as `pending` is back to null.
     await waitFor(() => expect(buy).toHaveAttribute("aria-busy", "false"));
-    fireEvent.change(screen.getByTestId("trade-quantity"), { target: { value: "1" } });
     await waitFor(() => expect(buy.disabled).toBe(false));
     expect(sell.disabled).toBe(false);
   });
@@ -126,42 +217,24 @@ describe("TradeBar", () => {
   it("attaches a fresh request_id per click", async () => {
     const calls = mockFetch(({ url }) => {
       if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
-      if (url === "/api/watchlist") return jsonResponse(watchlistPayload);
-      if (url === "/api/portfolio/trade") {
-        return jsonResponse({
-          id: "t1",
-          ticker: "AAPL",
-          side: "buy",
-          quantity: 1,
-          price: 191,
-          cost_basis: 191,
-          executed_at: "2026-05-08T12:00:00Z",
-          cash_balance: 9809,
-          position_quantity: 6,
-        });
-      }
+      if (url === "/api/portfolio/trade") return tradeOk();
       return jsonResponse({}, 404);
     });
 
     render(<TradeBar />);
-    fireEvent.change(screen.getByTestId("trade-ticker"), { target: { value: "AAPL" } });
-    fireEvent.change(screen.getByTestId("trade-quantity"), { target: { value: "1" } });
+    selectAAPL();
 
     const buy = screen.getByTestId("trade-buy");
     fireEvent.click(buy);
 
     await waitFor(() => {
-      const tradeCalls = calls.filter((c) => c.url === "/api/portfolio/trade");
-      expect(tradeCalls.length).toBe(1);
+      expect(calls.filter((c) => c.url === "/api/portfolio/trade").length).toBe(1);
     });
 
-    // After the first trade finishes, refresh fetches land. Reset & click again.
-    fireEvent.change(screen.getByTestId("trade-quantity"), { target: { value: "2" } });
     await waitFor(() => expect((buy as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(buy);
     await waitFor(() => {
-      const tradeCalls = calls.filter((c) => c.url === "/api/portfolio/trade");
-      expect(tradeCalls.length).toBe(2);
+      expect(calls.filter((c) => c.url === "/api/portfolio/trade").length).toBe(2);
     });
 
     const ids = calls
@@ -176,7 +249,6 @@ describe("TradeBar", () => {
   it("renders the server's error code inline on rejection", async () => {
     mockFetch(({ url }) => {
       if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
-      if (url === "/api/watchlist") return jsonResponse(watchlistPayload);
       if (url === "/api/portfolio/trade") {
         return jsonResponse(
           { error: "insufficient_cash", message: "Need $42 more" },
@@ -187,8 +259,7 @@ describe("TradeBar", () => {
     });
 
     render(<TradeBar />);
-    fireEvent.change(screen.getByTestId("trade-ticker"), { target: { value: "AAPL" } });
-    fireEvent.change(screen.getByTestId("trade-quantity"), { target: { value: "9999" } });
+    selectAAPL();
     fireEvent.click(screen.getByTestId("trade-buy"));
 
     const banner = await screen.findByTestId("trade-error");
@@ -196,32 +267,10 @@ describe("TradeBar", () => {
     expect(banner).toHaveTextContent(/not enough cash/i);
   });
 
-  it("submit is disabled when ticker or quantity is missing", async () => {
-    mockFetch(({ url }) => {
-      if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
-      if (url === "/api/watchlist") return jsonResponse(watchlistPayload);
-      return jsonResponse({}, 404);
-    });
-
-    render(<TradeBar />);
-    const buy = screen.getByTestId("trade-buy") as HTMLButtonElement;
-    expect(buy.disabled).toBe(true);
-
-    fireEvent.change(screen.getByTestId("trade-ticker"), { target: { value: "AAPL" } });
-    expect(buy.disabled).toBe(true); // still no qty
-
-    fireEvent.change(screen.getByTestId("trade-quantity"), { target: { value: "0" } });
-    expect(buy.disabled).toBe(true); // qty must be > 0
-
-    fireEvent.change(screen.getByTestId("trade-quantity"), { target: { value: "0.5" } });
-    await waitFor(() => expect(buy.disabled).toBe(false));
-  });
-
   it("rapid double-click fires exactly one /api/portfolio/trade request (regression #19)", async () => {
     let resolveTrade: ((res: Response) => void) | null = null;
     const calls = mockFetch(({ url }) => {
       if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
-      if (url === "/api/watchlist") return jsonResponse(watchlistPayload);
       if (url === "/api/portfolio/trade") {
         return new Promise<Response>((resolve) => {
           resolveTrade = resolve;
@@ -231,69 +280,33 @@ describe("TradeBar", () => {
     });
 
     render(<TradeBar />);
-    fireEvent.change(screen.getByTestId("trade-ticker"), { target: { value: "AAPL" } });
-    fireEvent.change(screen.getByTestId("trade-quantity"), { target: { value: "2" } });
+    selectAAPL();
 
     const buy = screen.getByTestId("trade-buy");
-
-    // Two clicks in the same task — neither has had a chance to re-render
-    // the disabled state. Without the synchronous ref guard this would
-    // produce two requests with two different request_ids.
     fireEvent.click(buy);
     fireEvent.click(buy);
 
-    // Settle so any racing fetch could land.
     await waitFor(() => {
       expect(calls.filter((c) => c.url === "/api/portfolio/trade").length).toBe(1);
     });
 
-    resolveTrade!(
-      jsonResponse({
-        id: "t1",
-        ticker: "AAPL",
-        side: "buy",
-        quantity: 2,
-        price: 191,
-        cost_basis: 191,
-        executed_at: "2026-05-08T12:00:00Z",
-        cash_balance: 9618,
-        position_quantity: 7,
-      }),
-    );
+    resolveTrade!(tradeOk());
 
-    // After settle, still exactly one trade request.
-    await waitFor(() => {
-      expect((buy as HTMLButtonElement).getAttribute("aria-busy")).toBe("false");
-    });
+    await waitFor(() =>
+      expect((buy as HTMLButtonElement).getAttribute("aria-busy")).toBe("false"),
+    );
     expect(calls.filter((c) => c.url === "/api/portfolio/trade").length).toBe(1);
   });
 
-  it("racing clicks share a request_id so server-side dedup is the second line of defense", async () => {
-    // We can't observe two simultaneous calls when guard 1 already blocked
-    // the second; instead we verify the *invariant* that the request_id
-    // generated on the first click is used. Capture it and assert.
+  it("sends a UUID-shaped request_id on the first click", async () => {
     mockFetch(({ url }) => {
       if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
-      if (url === "/api/watchlist") return jsonResponse(watchlistPayload);
-      if (url === "/api/portfolio/trade") {
-        return jsonResponse({
-          id: "t1",
-          ticker: "AAPL",
-          side: "buy",
-          quantity: 1,
-          price: 191,
-          cost_basis: 191,
-          executed_at: "2026-05-08T12:00:00Z",
-          cash_balance: 9809,
-          position_quantity: 6,
-        });
-      }
+      if (url === "/api/portfolio/trade") return tradeOk();
       return jsonResponse({}, 404);
     });
 
     render(<TradeBar />);
-    fireEvent.change(screen.getByTestId("trade-ticker"), { target: { value: "AAPL" } });
-    fireEvent.change(screen.getByTestId("trade-quantity"), { target: { value: "1" } });
+    selectAAPL();
     fireEvent.click(screen.getByTestId("trade-buy"));
 
     await waitFor(() => {
@@ -304,7 +317,6 @@ describe("TradeBar", () => {
       expect(tradeCall).toBeTruthy();
       const init = tradeCall?.[1] as RequestInit;
       const body = JSON.parse(init.body as string) as { request_id?: string };
-      // Request_id must be a UUID-shaped string — not undefined and not "".
       expect(typeof body.request_id).toBe("string");
       expect((body.request_id ?? "").length).toBeGreaterThan(8);
     });

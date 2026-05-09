@@ -56,10 +56,12 @@ Provider selection precedence: `FINNHUB_API_KEY` > `MASSIVE_API_KEY` > simulator
 
 ## 4. Sector taxonomy
 
-Defined in a new `backend/app/market/sectors.py`. Frozen list, version-tagged so the frontend can detect change:
+Defined in a new `backend/app/market/sectors.py`. Frozen list, version-tagged so the frontend can detect change.
+
+**Revised in v1.1 (task #14):** dropped the Materials sector to fit Finnhub's free-tier 50-symbol WebSocket cap. Final taxonomy is 5 sectors × 10 tickers = 50 tickers. The original v1.0 list had 6 sectors × 10 tickers = 60 tickers, which Finnhub free-tier rejected with `"Subscribing to too many symbols"`. A paid Finnhub plan would lift the cap; downgrading the tier was out of scope, so the 60th-50th tickers (Materials) were dropped instead.
 
 ```python
-SECTORS_VERSION = "1.0"
+SECTORS_VERSION = "1.1"
 
 SECTORS = [
     Sector("technology", "Technology", [
@@ -78,10 +80,6 @@ SECTORS = [
         "WMT", "COST", "HD", "MCD", "NKE",
         "SBUX", "TGT", "LOW", "DIS", "PG",
     ]),
-    Sector("materials", "Materials", [
-        "LIN", "SHW", "APD", "ECL", "FCX",
-        "NEM", "NUE", "DOW", "DD", "PPG",
-    ]),
     Sector("energy", "Energy", [
         "XOM", "CVX", "COP", "SLB", "EOG",
         "PSX", "MPC", "OXY", "VLO", "WMB",
@@ -89,7 +87,7 @@ SECTORS = [
 ]
 ```
 
-Total: 60 tickers, no duplicates across sectors. The simulator's seed-price + GBM-param table extends to cover all 60 (currently covers ~10).
+Total: 50 tickers, no duplicates across sectors. The simulator's seed-price + GBM-param table covers all 50 (was 60 in v1.0).
 
 ## 5. Real-time market data: Finnhub client
 
@@ -157,10 +155,8 @@ Three columns under a single header, per the agreed mockup:
 │    ...            │  ┌────────────── Open Positions ───────────────┐         ├──────────────┤
 │  ▾ Consumer       │  │ ticker │ qty │ avg │ last │ P&L │ P&L %      │         │  Trade Bar   │
 │    ...            │  └─────────────────────────────────────────────┘         │  AAPL │$293  │
-│  ▾ Materials      │                                                          │  Qty: − 5 +   │
+│  ▾ Energy         │                                                          │  Qty: − 5 +   │
 │    ...            │                                                          │  [Buy] [Sell] │
-│  ▾ Energy         │                                                          │              │
-│    ...            │                                                          │              │
 └────────────────────┴─────────────────────────────────────────────────────────┴──────────────┘
 ```
 

@@ -85,10 +85,19 @@ class TestSellBranch:
         assert r.trades[0].ticker == "AAPL"
 
 
+_WATCHLIST_DISABLED_MSG = (
+    "Watchlist actions are disabled now that all sectors stream by default."
+)
+
+
 class TestWatchBranch:
+    """Spec §6 — watchlist removed. The mock still emits the action
+    (so the executor's rejection path is exercised in E2E) but the
+    message text honestly says watchlist actions are disabled."""
+
     def test_watch_basic(self):
         r = mock_llm("watch PYPL")
-        assert r.message == "Added PYPL to your watchlist."
+        assert r.message == _WATCHLIST_DISABLED_MSG
         assert r.trades == []
         assert len(r.watchlist_changes) == 1
         assert r.watchlist_changes[0].ticker == "PYPL"
@@ -96,6 +105,7 @@ class TestWatchBranch:
 
     def test_watch_inside_sentence(self):
         r = mock_llm("could you watch SHOP for me")
+        assert r.message == _WATCHLIST_DISABLED_MSG
         assert r.watchlist_changes[0].ticker == "SHOP"
 
     def test_watchlist_substring_does_not_match(self):
@@ -108,12 +118,13 @@ class TestWatchBranch:
 class TestUnwatchBranch:
     def test_unwatch(self):
         r = mock_llm("unwatch PYPL")
-        assert r.message == "Removed PYPL from your watchlist."
+        assert r.message == _WATCHLIST_DISABLED_MSG
         assert r.watchlist_changes[0].action == "remove"
+        assert r.watchlist_changes[0].ticker == "PYPL"
 
     def test_remove(self):
         r = mock_llm("remove SHOP")
-        assert r.message == "Removed SHOP from your watchlist."
+        assert r.message == _WATCHLIST_DISABLED_MSG
         assert r.watchlist_changes[0].ticker == "SHOP"
         assert r.watchlist_changes[0].action == "remove"
 

@@ -1,8 +1,9 @@
 """Tests for market_status calculation.
 
-PLAN.md §6 contract:
-- Simulator (no MASSIVE_API_KEY) → always "open".
-- Massive (MASSIVE_API_KEY set) → "open" only on weekdays 09:30–16:00 NY.
+Contract (PLAN.md §6 + 2026-05-09 redesign §5):
+- Simulator (no real-data key set) -> always "open".
+- Real-data sources (FINNHUB_API_KEY or MASSIVE_API_KEY set) -> "open" only on
+  weekdays 09:30–16:00 NY.
 - "warming" is a stream-level concern, not returned here.
 """
 
@@ -17,6 +18,7 @@ from app.market.market_status import (
     NY_TZ,
     current_market_status,
     is_massive_path,
+    is_real_data_path,
     market_open_at,
 )
 
@@ -24,11 +26,19 @@ from app.market.market_status import (
 @pytest.fixture
 def simulator_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
 
 
 @pytest.fixture
 def massive_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
     monkeypatch.setenv("MASSIVE_API_KEY", "test-key-123")
+
+
+@pytest.fixture
+def finnhub_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.setenv("FINNHUB_API_KEY", "test-fh-key")
 
 
 # --------------------------------------------------------------------------
@@ -45,8 +55,32 @@ def test_is_massive_true_when_set(massive_env: None) -> None:
 
 
 def test_is_massive_false_when_empty_string(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
     monkeypatch.setenv("MASSIVE_API_KEY", "   ")
     assert is_massive_path() is False
+
+
+# --------------------------------------------------------------------------
+# is_real_data_path
+# --------------------------------------------------------------------------
+
+
+def test_is_real_data_false_when_neither_set(simulator_env: None) -> None:
+    assert is_real_data_path() is False
+
+
+def test_is_real_data_true_when_finnhub_set(finnhub_env: None) -> None:
+    assert is_real_data_path() is True
+
+
+def test_is_real_data_true_when_massive_set(massive_env: None) -> None:
+    assert is_real_data_path() is True
+
+
+def test_is_real_data_true_when_both_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FINNHUB_API_KEY", "fh")
+    monkeypatch.setenv("MASSIVE_API_KEY", "mv")
+    assert is_real_data_path() is True
 
 
 # --------------------------------------------------------------------------
@@ -114,5 +148,20 @@ def test_status_massive_closed_outside_session(massive_env: None) -> None:
 
 
 def test_status_massive_closed_on_weekend(massive_env: None) -> None:
+    dt = datetime(2026, 5, 9, 12, 0, tzinfo=NY_TZ)
+    assert current_market_status(now=dt) == "closed"
+
+
+def test_status_finnhub_open_during_session(finnhub_env: None) -> None:
+    dt = datetime(2026, 5, 5, 12, 0, tzinfo=NY_TZ)
+    assert current_market_status(now=dt) == "open"
+
+
+def test_status_finnhub_closed_outside_session(finnhub_env: None) -> None:
+    dt = datetime(2026, 5, 5, 20, 0, tzinfo=NY_TZ)
+    assert current_market_status(now=dt) == "closed"
+
+
+def test_status_finnhub_closed_on_weekend(finnhub_env: None) -> None:
     dt = datetime(2026, 5, 9, 12, 0, tzinfo=NY_TZ)
     assert current_market_status(now=dt) == "closed"

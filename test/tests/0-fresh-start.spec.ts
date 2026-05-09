@@ -1,43 +1,42 @@
 import { test, expect } from "../fixtures/app";
+import { SECTOR_IDS } from "../pages";
 
 /**
- * §12 "Fresh start" scenario. Asserts the *seed shape* of the workstation:
- * default 10-ticker watchlist, ≈$10k cash, live price stream, green dot.
+ * §12 "Fresh start" scenario, redesigned for the sector taxonomy.
  *
- * Cash is asserted within $5 of $10,000 rather than `=== 10000` because the
- * suite may run against a volume that already saw a previous test session.
- * `resetBackendState` flattens any open positions but the resulting sell
- * trades drift cash by cents (sell price ≠ buy price under GBM), accumulating
- * into single-digit dollars over many runs. A truly fresh container always
- * shows exactly $10,000.00.
+ * Asserts the seed shape of the workstation: the SectorWatchlist renders
+ * all 5 sector groups (v1.1 taxonomy — Materials dropped per task #14),
+ * the first ticker of the first sector (AAPL) shows a streamed price,
+ * ≈$10k cash, and the connection dot lands at green.
+ *
+ * Cash is asserted within $5 of $10,000 rather than `=== 10000` because
+ * the suite may run against a volume that already saw a previous test
+ * session. `resetBackendState` flattens any open positions but the
+ * resulting sell trades drift cash by cents (sell price ≠ buy price under
+ * GBM). A truly fresh container always shows exactly $10,000.00.
  */
-const SEED_TICKERS = [
-  "AAPL",
-  "GOOGL",
-  "MSFT",
-  "AMZN",
-  "TSLA",
-  "NVDA",
-  "META",
-  "JPM",
-  "V",
-  "NFLX",
-];
+const FIRST_TICKER = "AAPL"; // First ticker of first sector per spec §7.
 
 test.describe("@fresh fresh start", () => {
-  test("default watchlist, ≈$10k balance, prices stream within 5s", async ({
+  test("sector watchlist + ≈$10k balance + prices stream within 5s", async ({
     page,
     header,
-    watchlist,
+    sectors,
   }) => {
     await page.goto("/");
 
-    // Watchlist panel renders with all 10 seed tickers.
-    await expect(watchlist.panel).toBeVisible();
-    for (const ticker of SEED_TICKERS) {
-      await expect(watchlist.row(ticker)).toBeVisible();
+    // SectorWatchlist panel renders with all 5 sector groups.
+    await expect(sectors.panel).toBeVisible();
+    for (const sectorId of SECTOR_IDS) {
+      await expect(sectors.group(sectorId)).toBeVisible();
     }
-    await expect(watchlist.rows).toHaveCount(SEED_TICKERS.length);
+
+    // 50 ticker rows total (5 × 10) — Materials dropped per task #14 to
+    // fit Finnhub's free-tier 50-symbol WebSocket cap.
+    await expect(sectors.rows).toHaveCount(50);
+
+    // AAPL row is rendered (first sector, first ticker).
+    await expect(sectors.row(FIRST_TICKER)).toBeVisible();
 
     // Cash balance is ≈ $10k (drift tolerance: $5 covers prior-session reset).
     await expect(header.cashValue).toBeVisible();
@@ -48,20 +47,20 @@ test.describe("@fresh fresh start", () => {
     expect(cash).not.toBeNull();
     expect(Math.abs(cash! - 10000)).toBeLessThan(5);
 
-    // Total value should also be in the same neighborhood (no positions yet,
-    // so total ≈ cash give or take a live tick).
+    // Total value is in the same neighborhood (no positions yet).
     const total = await header.readTotal();
     expect(total).not.toBeNull();
     expect(Math.abs(total! - 10000)).toBeLessThan(5);
 
-    // Prices stream — the AAPL row's price renders a real number within 5s.
+    // Prices stream — AAPL row's price renders a real number within 10s.
+    // The simulator emits at ~500ms cadence; 10s is generous.
     await expect
       .poll(
         async () => {
-          const text = (await watchlist.price("AAPL").innerText()).trim();
+          const text = (await sectors.price(FIRST_TICKER).innerText()).trim();
           return text.length > 0 && text !== "—" && /\d/.test(text);
         },
-        { timeout: 5_000 },
+        { timeout: 10_000 },
       )
       .toBe(true);
 

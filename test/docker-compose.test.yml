@@ -24,13 +24,24 @@ services:
       ANTHROPIC_API_KEY: "test-mock-key"
       # Empty Massive key forces the simulator path — required for ticker-allowlist tests.
       MASSIVE_API_KEY: ""
+      # Empty Finnhub key too — the simulator is the only source that streams
+      # ticks regardless of market hours / weekend, which is required for the
+      # E2E suite to be runnable any time of day. With FINNHUB_API_KEY set,
+      # `current_price` stays null outside market hours and trades reject with
+      # `price_unavailable`.
+      FINNHUB_API_KEY: ""
     ports:
-      - "8000:8000"
+      # Host port 8001 (not 8000) to avoid colliding with the devops smoke
+      # container (`finally:latest`) which auto-respawns on 8000. Tests
+      # target this via FINALLY_BASE_URL in playwright.config.ts.
+      - "8001:8000"
     volumes:
       # Ephemeral SQLite per test run — bind to a tmpfs-style anonymous volume so
       # the next `up` starts from a clean seed without requiring `down -v`.
       - finally-e2e-db:/app/db
     healthcheck:
+      # Healthcheck runs INSIDE the container — uses container port 8000
+      # regardless of the host port mapping above.
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=2).status == 200 else 1)\""]
       interval: 3s
       timeout: 3s

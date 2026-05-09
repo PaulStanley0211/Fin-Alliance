@@ -1,12 +1,11 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { usePortfolio } from "@/lib/portfolio";
 import { useSelectedTicker } from "@/lib/selection";
 import { useSseState } from "@/lib/sse";
-import { useWatchlist } from "@/lib/watchlist";
 import type { TradeSide } from "@/lib/types";
 
 function uuid(): string {
@@ -23,17 +22,24 @@ function uuid(): string {
 const ERROR_MESSAGES: Record<string, string> = {
   insufficient_cash: "Not enough cash to buy that quantity.",
   insufficient_shares: "You don't own that many shares to sell.",
-  ticker_unsupported: "Unknown ticker. Set MASSIVE_API_KEY for full coverage.",
-  watchlist_full: "Watchlist is full (max 25).",
+  ticker_unsupported: "Unknown ticker. Set a real-data API key for full coverage.",
   invalid_request: "Invalid trade input.",
   duplicate_request: "Duplicate trade ignored.",
   price_unavailable: "Price unavailable. Try again in a moment.",
 };
 
+const MIN_QTY = 1;
+
 /**
- * Compact market-order trade bar. One ticker input, one quantity input,
- * Buy + Sell buttons. After a successful trade we refresh portfolio +
- * watchlist (a buy may auto-add a new ticker per §8).
+ * Vertical trade bar pinned below the chat panel.
+ *
+ * Layout reads top-to-bottom:
+ *   1. Selected ticker label + live price
+ *   2. Quantity row: − / [N] / +  (integer stepper, also typeable)
+ *   3. Buy / Sell row: equal-width buttons
+ *
+ * Selected ticker comes from `useSelectedTicker()` — there is no longer a
+ * ticker input here. The watchlist row click is the entry gesture.
  *
  * Idempotency (PLAN.md §8):
  *
@@ -45,22 +51,16 @@ const ERROR_MESSAGES: Record<string, string> = {
  *
  * 2. **Stable request_id per attempt** — we hold the UUID in a ref and
  *    only regenerate it after the server confirms the trade (or rejects
- *    it). Any double-fire that *did* slip past guard 1 (e.g. concurrent
- *    Buy then Sell from a buggy callsite) would still share a
- *    request_id, so the server's `(user_id, request_id)` dedup catches
- *    the duplicate. Defense in depth.
- *
- * The button's `disabled` attribute remains as a UX hint; the two ref
- * guards are the actual correctness story.
+ *    it). Any double-fire that *did* slip past guard 1 would still share
+ *    a request_id, so the server's `(user_id, request_id)` dedup catches
+ *    the duplicate.
  */
 export function TradeBar() {
   const portfolio = usePortfolio();
-  const watchlist = useWatchlist();
   const sse = useSseState();
   const [selected] = useSelectedTicker();
 
-  const [ticker, setTicker] = useState("");
-  const [qty, setQty] = useState("");
+  const [qty, setQty] = useState<number>(MIN_QTY);
   const [pending, setPending] = useState<TradeSide | null>(null);
   const [error, setError] = useState<{ code: string; message: string } | null>(
     null,
@@ -71,24 +71,40 @@ export function TradeBar() {
   const inFlightRef = useRef(false);
   const pendingRequestIdRef = useRef<string | null>(null);
 
-  const effectiveTicker = (ticker || selected || "").toUpperCase().trim();
-  const numericQty = Number(qty);
-  const isQtyValid = qty.length > 0 && Number.isFinite(numericQty) && numericQty > 0;
-  const canSubmit = effectiveTicker.length >= 1 && isQtyValid && pending === null;
+  // Reset the qty + transient banners when the user picks a new ticker.
+  useEffect(() => {
+    setQty(MIN_QTY);
+    setError(null);
+    setConfirmation(null);
+  }, [selected]);
 
-  const livePrice = effectiveTicker ? sse.prices[effectiveTicker]?.price : undefined;
-  const estimateCost = livePrice && isQtyValid ? livePrice * numericQty : null;
+  const ticker = selected ?? null;
+  const livePrice = ticker ? sse.prices[ticker]?.price : undefined;
+  const estimateCost = livePrice && qty > 0 ? livePrice * qty : null;
+  const canSubmit = ticker !== null && qty >= MIN_QTY && pending === null;
 
-  async function submit(side: TradeSide, e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    // The ref check is what stops the rapid-double-click from firing two
-    // requests; `canSubmit` is the React-state mirror that drives the
-    // disabled UI but updates asynchronously.
-    if (inFlightRef.current || !canSubmit) return;
+  function bumpQty(delta: number): void {
+    setQty((q) => {
+      const next = Math.max(MIN_QTY, Math.floor(q + delta));
+      return Number.isFinite(next) ? next : MIN_QTY;
+    });
+  }
+
+  function handleQtyInput(raw: string): void {
+    if (raw.trim() === "") {
+      // Allow the field to be momentarily empty during edit; clamp on blur.
+      setQty(MIN_QTY);
+      return;
+    }
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return;
+    setQty(Math.max(MIN_QTY, n));
+  }
+
+  async function submit(side: TradeSide): Promise<void> {
+    if (inFlightRef.current || !canSubmit || ticker === null) return;
     inFlightRef.current = true;
 
-    // Stable request_id: generate once on the first attempt, reuse for any
-    // racing retry, regenerate after success/failure.
     if (pendingRequestIdRef.current === null) {
       pendingRequestIdRef.current = uuid();
     }
@@ -99,17 +115,15 @@ export function TradeBar() {
     setConfirmation(null);
     try {
       const res = await api.trade({
-        ticker: effectiveTicker,
-        quantity: numericQty,
+        ticker,
+        quantity: qty,
         side,
         request_id: requestId,
       });
       setConfirmation(
         `${side === "buy" ? "Bought" : "Sold"} ${formatQty(res.quantity)} ${res.ticker} @ $${res.price.toFixed(2)}`,
       );
-      setQty("");
-      // Refresh portfolio + watchlist (a buy may auto-add a new ticker).
-      await Promise.all([portfolio.refresh(), watchlist.refresh()]);
+      await portfolio.refresh();
     } catch (e) {
       if (e instanceof ApiError) {
         setError({
@@ -120,8 +134,6 @@ export function TradeBar() {
         setError({ code: "unknown_error", message: (e as Error).message });
       }
     } finally {
-      // Clear *both* guards together so the next user gesture is a fresh
-      // attempt with a fresh request_id.
       pendingRequestIdRef.current = null;
       inFlightRef.current = false;
       setPending(null);
@@ -133,80 +145,120 @@ export function TradeBar() {
       className="panel relative flex flex-col overflow-hidden"
       data-testid="trade-bar"
     >
-      <form
-        onSubmit={(e) => e.preventDefault()}
-        className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-line-soft bg-bg-2/40"
-      >
-        <span className="eyebrow text-secondary-glow shrink-0">Trade</span>
+      <div className="px-3 py-2 border-b border-line-soft bg-bg-2/40 flex items-center justify-between">
+        <span className="eyebrow text-secondary-glow">Trade</span>
+        <span className="font-mono text-2xs uppercase tracking-eyebrow text-ink-3">
+          market order
+        </span>
+      </div>
 
-        <input
-          type="text"
-          inputMode="text"
-          autoComplete="off"
-          value={ticker}
-          placeholder={selected ?? "TICKER"}
-          onChange={(e) => setTicker(e.target.value.toUpperCase())}
-          className="input !py-1.5 w-28 uppercase tracking-terminal"
-          aria-label="Ticker symbol"
-          data-testid="trade-ticker"
-          maxLength={10}
-          list="watchlist-tickers"
-        />
-        <datalist id="watchlist-tickers">
-          {watchlist.tickers.map((t) => (
-            <option key={t} value={t} />
-          ))}
-        </datalist>
+      {ticker === null ? (
+        <EmptyState />
+      ) : (
+        <div className="flex flex-col gap-3 px-3 py-3">
+          {/* Row 1: ticker + live price */}
+          <div className="flex items-baseline justify-between">
+            <span
+              className="font-mono text-base font-medium tracking-terminal text-ink-0"
+              data-testid="trade-ticker"
+            >
+              {ticker}
+            </span>
+            <span className="font-mono text-sm tabular text-ink-1">
+              {livePrice !== undefined ? (
+                <>
+                  <span className="text-ink-3 mr-0.5">$</span>
+                  {livePrice.toFixed(2)}
+                </>
+              ) : (
+                <span className="text-ink-3">—</span>
+              )}
+            </span>
+          </div>
 
-        <input
-          type="number"
-          inputMode="decimal"
-          step="any"
-          min="0"
-          value={qty}
-          placeholder="Qty"
-          onChange={(e) => setQty(e.target.value)}
-          className="input !py-1.5 w-28 tabular"
-          aria-label="Quantity (fractional shares allowed)"
-          data-testid="trade-quantity"
-        />
+          {/* Row 2: quantity stepper */}
+          <div className="flex flex-col gap-1.5">
+            <span className="font-mono text-2xs uppercase tracking-eyebrow text-ink-2">
+              Quantity
+            </span>
+            <div className="grid grid-cols-[40px_minmax(0,1fr)_40px] items-stretch gap-1.5">
+              <button
+                type="button"
+                onClick={() => bumpQty(-1)}
+                disabled={qty <= MIN_QTY || pending !== null}
+                aria-label="Decrease quantity"
+                data-testid="trade-qty-minus"
+                className="font-mono text-base text-ink-1 border border-line-soft hover:border-line-strong hover:text-ink-0 bg-bg-2/60 rounded-sharp transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                −
+              </button>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={MIN_QTY}
+                step={1}
+                value={qty}
+                onChange={(e) => handleQtyInput(e.target.value)}
+                onBlur={() => {
+                  if (!Number.isFinite(qty) || qty < MIN_QTY) setQty(MIN_QTY);
+                }}
+                aria-label="Quantity"
+                data-testid="trade-qty"
+                disabled={pending !== null}
+                className="input !py-1.5 text-center tabular text-base"
+              />
+              <button
+                type="button"
+                onClick={() => bumpQty(1)}
+                disabled={pending !== null}
+                aria-label="Increase quantity"
+                data-testid="trade-qty-plus"
+                className="font-mono text-base text-ink-1 border border-line-soft hover:border-line-strong hover:text-ink-0 bg-bg-2/60 rounded-sharp transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                +
+              </button>
+            </div>
+            <span className="font-mono text-2xs tabular text-ink-3 h-3">
+              {estimateCost !== null ? (
+                <>
+                  ≈{" "}
+                  <span className="text-ink-1">${estimateCost.toFixed(2)}</span>
+                </>
+              ) : (
+                ""
+              )}
+            </span>
+          </div>
 
-        {estimateCost !== null ? (
-          <span className="font-mono text-2xs text-ink-2 tracking-terminal">
-            ≈ <span className="text-ink-0 tabular">${estimateCost.toFixed(2)}</span>
-            <span className="text-ink-3 ml-1">@ ${livePrice?.toFixed(2)}</span>
-          </span>
-        ) : (
-          <span className="font-mono text-2xs text-ink-3">market order</span>
-        )}
-
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            type="submit"
-            onClick={(e) => submit("buy", e as unknown as FormEvent<HTMLFormElement>)}
-            disabled={!canSubmit}
-            data-testid="trade-buy"
-            className="btn-buy"
-            aria-busy={pending === "buy"}
-          >
-            {pending === "buy" ? "Buying…" : "Buy"}
-          </button>
-          <button
-            type="submit"
-            onClick={(e) => submit("sell", e as unknown as FormEvent<HTMLFormElement>)}
-            disabled={!canSubmit}
-            data-testid="trade-sell"
-            className="btn-sell"
-            aria-busy={pending === "sell"}
-          >
-            {pending === "sell" ? "Selling…" : "Sell"}
-          </button>
+          {/* Row 3: Buy / Sell */}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => void submit("buy")}
+              disabled={!canSubmit}
+              data-testid="trade-buy"
+              className="btn-buy py-2 text-sm"
+              aria-busy={pending === "buy"}
+            >
+              {pending === "buy" ? "Buying…" : "Buy"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void submit("sell")}
+              disabled={!canSubmit}
+              data-testid="trade-sell"
+              className="btn-sell py-2 text-sm"
+              aria-busy={pending === "sell"}
+            >
+              {pending === "sell" ? "Selling…" : "Sell"}
+            </button>
+          </div>
         </div>
-      </form>
+      )}
 
       {error ? (
         <div
-          className="px-3 py-1.5 border-b border-down/40 bg-down/10 font-mono text-2xs text-down flex items-center justify-between"
+          className="px-3 py-1.5 border-t border-down/40 bg-down/10 font-mono text-2xs text-down flex items-center justify-between"
           role="alert"
           data-testid="trade-error"
           data-code={error.code}
@@ -224,13 +276,26 @@ export function TradeBar() {
       ) : null}
       {confirmation ? (
         <div
-          className="px-3 py-1.5 border-b border-up/40 bg-up/5 font-mono text-2xs text-up"
+          className="px-3 py-1.5 border-t border-up/40 bg-up/5 font-mono text-2xs text-up"
           role="status"
           data-testid="trade-confirmation"
         >
           {confirmation}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div
+      className="px-4 py-6 text-center"
+      data-testid="trade-empty-state"
+    >
+      <p className="font-display italic text-ink-1">
+        Select a ticker from the watchlist to trade
+      </p>
     </div>
   );
 }

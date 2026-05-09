@@ -55,20 +55,32 @@ class TestSystemPrompt:
         assert "$200.00" in prompt  # current price
         assert "+5.26%" in prompt   # pnl percent
 
-    def test_includes_watchlist(self):
+    def test_does_not_render_watchlist_block(self):
+        # Spec §6 — watchlist removed. The portfolio block must not list
+        # the user's old watchlist entries; only positions remain.
         ctx = _full_ctx()
         prompt = build_system_prompt(ctx)
-        assert "MSFT" in prompt
-        assert "$420.00" in prompt
-        assert "NVDA" in prompt
-        # Missing-price watchlist entry shows em-dash
-        assert "—" in prompt
+        # No "Watchlist (n):" header in the rendered prompt.
+        assert "Watchlist (" not in prompt
+        # MSFT's $420.00 only existed in the old rendered watchlist block;
+        # no position has it, so it must not appear anywhere now.
+        assert "$420.00" not in prompt
+
+    def test_does_not_suggest_managing_watchlist(self):
+        # Spec §6 — system prompt must not ask the model to manage a
+        # watchlist or suggest add/remove actions proactively.
+        prompt = build_system_prompt(_empty_ctx())
+        lowered = prompt.lower()
+        # The phrase that used to live in the prompt:
+        assert "manage the watchlist" not in lowered
+        assert "watchlist proactively" not in lowered
+        # The schema example must show an empty watchlist_changes array.
+        assert '"watchlist_changes": []' in prompt
 
     def test_empty_portfolio_renders_none(self):
         ctx = _empty_ctx()
         prompt = build_system_prompt(ctx)
         assert "Positions (0)" in prompt
-        assert "Watchlist (0)" in prompt
         assert "(none)" in prompt
 
     def test_explicit_intent_rule_present(self):
@@ -80,7 +92,7 @@ class TestSystemPrompt:
     def test_describes_json_schema(self):
         prompt = build_system_prompt(_empty_ctx())
         assert "trades" in prompt
-        assert "watchlist_changes" in prompt
+        assert "watchlist_changes" in prompt  # field still exists in schema
         assert "message" in prompt
 
 

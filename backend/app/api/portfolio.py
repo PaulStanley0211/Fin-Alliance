@@ -15,17 +15,15 @@ from app.api.schemas import (
     TradeRequest,
     TradeResponse,
 )
-from app.api.tickers import WATCHLIST_LIMIT, validate_ticker_supported
+from app.api.tickers import validate_ticker_supported
 from app.db import (
     InsufficientSharesError,
-    add_to_watchlist,
     apply_buy,
     apply_sell,
     get_position,
     get_user,
     list_positions,
     list_snapshots,
-    list_watchlist,
     record_trade,
     update_cash_balance,
     write_snapshot_now,
@@ -123,12 +121,13 @@ async def post_trade(
     Order of operations:
       1. Idempotency check on (user_id, request_id), if provided.
       2. Validate ticker against the data-source policy.
-      3. Resolve current price from the cache.
-      4. Auto-add to watchlist if absent (enforces 25-cap; rejects unsupported).
-      5. Apply buy/sell to positions, capture cost_basis.
-      6. Update cash balance.
-      7. Record the trade row (with cost_basis and request_id).
-      8. Write a portfolio snapshot.
+      3. Resolve current price from the cache; subscribe via the data
+         source if the ticker isn't already streaming (defensive — with
+         all 60 sector tickers pre-subscribed this is rarely hit).
+      4. Apply buy/sell to positions, capture cost_basis.
+      5. Update cash balance.
+      6. Record the trade row (with cost_basis and request_id).
+      7. Write a portfolio snapshot.
     """
     cache = state.price_cache
     source = state.market_source
@@ -148,14 +147,9 @@ async def post_trade(
         raise errors.price_unavailable()
     price = cache.get_price(body.ticker)
     if price is None:
-        # Auto-add the ticker so the next poll/sim tick lands a price, then
-        # bail with a recoverable error — the caller can retry shortly.
+        # Subscribe so the next poll/sim tick lands a price, then bail with
+        # a recoverable error — the caller can retry shortly.
         if source is not None:
-            with connect() as conn:
-                if body.ticker not in list_watchlist(conn):
-                    if len(list_watchlist(conn)) >= WATCHLIST_LIMIT:
-                        raise errors.watchlist_full(WATCHLIST_LIMIT)
-                    add_to_watchlist(conn, body.ticker)
             await source.add_ticker(body.ticker)
             price = cache.get_price(body.ticker)
         if price is None:
@@ -163,17 +157,7 @@ async def post_trade(
                 f"No price yet for {body.ticker}. Try again in a moment."
             )
 
-    # 4. Auto-add to watchlist if missing
-    with connect() as conn:
-        watchlist = list_watchlist(conn)
-        if body.ticker not in watchlist:
-            if len(watchlist) >= WATCHLIST_LIMIT:
-                raise errors.watchlist_full(WATCHLIST_LIMIT)
-            add_to_watchlist(conn, body.ticker)
-            if source is not None:
-                await source.add_ticker(body.ticker)
-
-    # 5–7. Execute trade (single connection for atomicity-ish)
+    # 4–6. Execute trade (single connection for atomicity-ish)
     with connect() as conn:
         user = get_user(conn)
         if user is None:
@@ -206,7 +190,7 @@ async def post_trade(
             request_id=body.request_id,
         )
 
-    # 8. Snapshot for the P&L chart.
+    # 7. Snapshot for the P&L chart.
     if cache is not None:
         try:
             write_snapshot_now(cache)

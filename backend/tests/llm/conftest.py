@@ -21,8 +21,12 @@ from app.state import get_state, reset_state_for_tests
 
 @pytest.fixture(autouse=True)
 def llm_mock_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force LLM_MOCK=true for the chat-path tests by default."""
+    """Force LLM_MOCK=true and isolate from real-data env keys for chat tests."""
     monkeypatch.setenv("LLM_MOCK", "true")
+    # Tests run on the simulator path — keep real-data keys out of the env
+    # so trade-validation routes hit the sector-allowlist branch.
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
 
 
 @pytest.fixture

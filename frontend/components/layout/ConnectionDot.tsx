@@ -45,18 +45,18 @@ const STATE_META: Record<
     label: "Live",
     ring: "border-up/40",
     dot: "bg-up",
-    glow: "shadow-[0_0_10px_rgba(38,208,134,0.6)]",
+    glow: "shadow-[0_0_10px_rgb(var(--up-rgb)/0.6)]",
   },
   yellow: {
     label: "Reconnecting",
     ring: "border-accent/40",
     dot: "bg-accent animate-pulse-dot",
-    glow: "shadow-[0_0_10px_rgba(236,173,10,0.55)]",
+    glow: "shadow-[0_0_10px_rgb(var(--accent-rgb)/0.55)]",
   },
   red: {
     label: "Offline",
     ring: "border-down/40",
     dot: "bg-down",
-    glow: "shadow-[0_0_10px_rgba(240,80,110,0.55)]",
+    glow: "shadow-[0_0_10px_rgb(var(--down-rgb)/0.55)]",
   },
 };

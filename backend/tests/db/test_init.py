@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.db import connect, init_db
-from app.db.init import DEFAULT_TICKERS, DEFAULT_USER_ID
+from app.db.init import DEFAULT_USER_ID
 
 
 def test_init_creates_all_tables(db_file: Path) -> None:
@@ -19,12 +19,53 @@ def test_init_creates_all_tables(db_file: Path) -> None:
     names = {r["name"] for r in rows}
     assert {
         "users_profile",
-        "watchlist",
         "positions",
         "trades",
         "portfolio_snapshots",
         "chat_messages",
     } <= names
+
+
+def test_init_does_not_create_watchlist_table(db_file: Path) -> None:
+    """Fresh DBs must not get a `watchlist` table — the redesign dropped it."""
+    init_db()
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name = 'watchlist'"
+        ).fetchall()
+    assert rows == []
+
+
+def test_init_tolerates_orphan_watchlist_table(db_file: Path) -> None:
+    """Existing v1 DBs already contain a `watchlist` table; `init_db()` must
+    leave it alone (no DROP) and complete successfully on a re-init.
+    """
+    # Simulate a v1 DB by pre-creating the orphan table before init.
+    with connect() as conn:
+        conn.execute(
+            "CREATE TABLE watchlist ("
+            "id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT 'default', "
+            "ticker TEXT NOT NULL, added_at TEXT NOT NULL, "
+            "UNIQUE (user_id, ticker))"
+        )
+        conn.execute(
+            "INSERT INTO watchlist (id, user_id, ticker, added_at) "
+            "VALUES ('id1', 'default', 'AAPL', '2024-01-01T00:00:00+00:00')"
+        )
+        conn.commit()
+
+    init_db()  # Must not raise.
+
+    with connect() as conn:
+        # Orphan table is still there with its original row.
+        rows = conn.execute("SELECT ticker FROM watchlist").fetchall()
+        assert [r["ticker"] for r in rows] == ["AAPL"]
+        # New tables seeded as expected.
+        user = conn.execute(
+            "SELECT cash_balance FROM users_profile WHERE id = ?", (DEFAULT_USER_ID,)
+        ).fetchone()
+        assert user is not None
+        assert user["cash_balance"] == 10_000.0
 
 
 def test_init_seeds_default_user_with_10k(db_file: Path) -> None:
@@ -35,17 +76,6 @@ def test_init_seeds_default_user_with_10k(db_file: Path) -> None:
         ).fetchone()
     assert row is not None
     assert row["cash_balance"] == 10_000.0
-
-
-def test_init_seeds_default_watchlist(db_file: Path) -> None:
-    init_db()
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT ticker FROM watchlist WHERE user_id = ? ORDER BY ticker",
-            (DEFAULT_USER_ID,),
-        ).fetchall()
-    tickers = [r["ticker"] for r in rows]
-    assert sorted(tickers) == sorted(DEFAULT_TICKERS)
 
 
 def test_init_writes_anchor_snapshot(db_file: Path) -> None:
@@ -65,15 +95,11 @@ def test_init_is_idempotent(db_file: Path) -> None:
     init_db()
     with connect() as conn:
         users = conn.execute("SELECT COUNT(*) AS n FROM users_profile").fetchone()["n"]
-        wl = conn.execute(
-            "SELECT COUNT(*) AS n FROM watchlist WHERE user_id = ?", (DEFAULT_USER_ID,)
-        ).fetchone()["n"]
         snaps = conn.execute(
             "SELECT COUNT(*) AS n FROM portfolio_snapshots WHERE user_id = ?",
             (DEFAULT_USER_ID,),
         ).fetchone()["n"]
     assert users == 1
-    assert wl == len(DEFAULT_TICKERS)
     assert snaps == 1
 
 

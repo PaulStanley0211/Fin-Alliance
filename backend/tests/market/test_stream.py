@@ -59,6 +59,7 @@ def populated_cache() -> PriceCache:
 @pytest.fixture
 def simulator_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
 
 
 # --------------------------------------------------------------------------

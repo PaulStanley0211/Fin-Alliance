@@ -1,6 +1,11 @@
 import type { Locator, Page } from "@playwright/test";
 import { BasePage } from "./BasePage";
 
+/**
+ * MainChart + PnLChart locators. The redesign keeps both components; the
+ * old holdings-list / treemap that lived alongside them is now owned by
+ * HeatmapPage (PortfolioHeatmap, restored per §8 / §9).
+ */
 export class ChartsPage extends BasePage {
   constructor(page: Page) {
     super(page);
@@ -8,36 +13,6 @@ export class ChartsPage extends BasePage {
 
   get mainChart(): Locator {
     return this.byTestId("main-chart");
-  }
-
-  // Holdings list (replaced the treemap heatmap; same panel region).
-  get holdingsList(): Locator {
-    return this.byTestId("positions-list");
-  }
-
-  holdingsRow(ticker: string): Locator {
-    return this.byTestId(`holdings-row-${ticker}`);
-  }
-
-  holdingsValue(ticker: string): Locator {
-    return this.byTestId(`holdings-value-${ticker}`);
-  }
-
-  holdingsPnl(ticker: string): Locator {
-    return this.byTestId(`holdings-pnl-${ticker}`);
-  }
-
-  holdingsPnlPercent(ticker: string): Locator {
-    return this.byTestId(`holdings-pnl-percent-${ticker}`);
-  }
-
-  holdingsWeight(ticker: string): Locator {
-    return this.byTestId(`holdings-weight-${ticker}`);
-  }
-
-  /** All holdings rows in render order (sorted by market value desc). */
-  get holdingsRows(): Locator {
-    return this.page.locator('[data-testid^="holdings-row-"]');
   }
 
   get pnlChart(): Locator {

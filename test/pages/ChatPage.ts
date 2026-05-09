@@ -57,6 +57,25 @@ export class ChatPage extends BasePage {
     return this.byTestId(`chat-action-watchlist-${ticker}`);
   }
 
+  /**
+   * Rejection chips rendered when the executor short-circuits a
+   * watchlist_changes action with `error: "watchlist_disabled"` (redesign
+   * spec §6 / §8). The frontend ships these as muted italic notices with
+   * INDEX-BASED testids — `chat-watchlist-disabled-0`, `-1`, `-2`, …
+   * (one per chip across the entire conversation, NOT keyed by ticker).
+   * The chip text is the constant string "watchlist actions are disabled".
+   *
+   * Use `nthWatchlistDisabled(n)` for a specific occurrence and
+   * `anyWatchlistDisabled` for "at least one is rendered" assertions.
+   */
+  nthWatchlistDisabled(n: number): Locator {
+    return this.byTestId(`chat-watchlist-disabled-${n}`);
+  }
+
+  get anyWatchlistDisabled(): Locator {
+    return this.page.locator('[data-testid^="chat-watchlist-disabled-"]');
+  }
+
   async send(text: string): Promise<void> {
     await this.input.fill(text);
     await this.sendButton.click();

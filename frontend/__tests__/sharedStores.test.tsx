@@ -2,13 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 
 import { usePortfolio, __internals as portfolioInternals } from "@/lib/portfolio";
-import { useWatchlist, __internals as watchlistInternals } from "@/lib/watchlist";
+import { useSectors, __internals as sectorsInternals } from "@/lib/sectors";
 
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   portfolioInternals.store.__reset();
-  watchlistInternals.store.__reset();
+  sectorsInternals.store.__reset();
 });
 
 afterEach(() => {
@@ -63,11 +63,14 @@ const portfolioV2 = {
   realized_pnl: 0,
 };
 
-const watchlistV1 = { tickers: [{ ticker: "AAPL", price: null, previous_price: null, direction: null, timestamp: null }] };
-const watchlistV2 = {
-  tickers: [
-    { ticker: "AAPL", price: null, previous_price: null, direction: null, timestamp: null },
-    { ticker: "PYPL", price: null, previous_price: null, direction: null, timestamp: null },
+const sectorsV1 = {
+  version: "1.1",
+  sectors: [{ id: "technology", label: "Technology", tickers: ["AAPL"] }],
+};
+const sectorsV2 = {
+  version: "1.2",
+  sectors: [
+    { id: "technology", label: "Technology", tickers: ["AAPL", "MSFT"] },
   ],
 };
 
@@ -80,16 +83,17 @@ function PortfolioReader({ id }: { id: string }) {
   );
 }
 
-function WatchlistReader({ id }: { id: string }) {
-  const watchlist = useWatchlist();
-  return <div data-testid={id}>tickers:{watchlist.tickers.join(",")}</div>;
+function SectorsReader({ id }: { id: string }) {
+  const sectors = useSectors();
+  const tickers = sectors.sectors.flatMap((s) => s.tickers).join(",");
+  return <div data-testid={id}>tickers:{tickers}</div>;
 }
 
 describe("shared portfolio store (regression for #18)", () => {
   it("two components hit /api/portfolio once between them", async () => {
     const calls = mockFetch(({ url }) => {
       if (url === "/api/portfolio") return jsonResponse(portfolioV1);
-      return jsonResponse({ tickers: [] });
+      return jsonResponse({});
     });
 
     render(
@@ -114,7 +118,7 @@ describe("shared portfolio store (regression for #18)", () => {
       if (url === "/api/portfolio") {
         return jsonResponse(phase === "v1" ? portfolioV1 : portfolioV2);
       }
-      return jsonResponse({ tickers: [] });
+      return jsonResponse({});
     });
 
     render(
@@ -128,13 +132,11 @@ describe("shared portfolio store (regression for #18)", () => {
       expect(screen.getByTestId("reader-a")).toHaveTextContent("positions:0");
     });
 
-    // Simulate a server-side mutation (e.g. ChatPanel buying 5 AAPL).
     phase = "v2";
     await act(async () => {
       await portfolioInternals.store.refresh();
     });
 
-    // BOTH readers see the new state — this is the regression we're guarding against.
     expect(screen.getByTestId("reader-a")).toHaveTextContent("positions:1");
     expect(screen.getByTestId("reader-b")).toHaveTextContent("positions:1");
     expect(screen.getByTestId("reader-a")).toHaveTextContent("cash:9000");
@@ -142,17 +144,17 @@ describe("shared portfolio store (regression for #18)", () => {
   });
 });
 
-describe("shared watchlist store (regression for #18)", () => {
-  it("two components hit /api/watchlist once between them", async () => {
+describe("shared sectors store", () => {
+  it("two components hit /api/sectors once between them", async () => {
     const calls = mockFetch(({ url }) => {
-      if (url === "/api/watchlist") return jsonResponse(watchlistV1);
+      if (url === "/api/sectors") return jsonResponse(sectorsV1);
       return jsonResponse({});
     });
 
     render(
       <>
-        <WatchlistReader id="reader-a" />
-        <WatchlistReader id="reader-b" />
+        <SectorsReader id="reader-a" />
+        <SectorsReader id="reader-b" />
       </>,
     );
 
@@ -161,23 +163,23 @@ describe("shared watchlist store (regression for #18)", () => {
     });
     expect(screen.getByTestId("reader-b")).toHaveTextContent("tickers:AAPL");
 
-    const watchCalls = calls.filter((c) => c.url === "/api/watchlist");
-    expect(watchCalls.length).toBe(1);
+    const sectorCalls = calls.filter((c) => c.url === "/api/sectors");
+    expect(sectorCalls.length).toBe(1);
   });
 
   it("a refresh in one consumer propagates to all consumers", async () => {
     let phase: "v1" | "v2" = "v1";
     mockFetch(({ url }) => {
-      if (url === "/api/watchlist") {
-        return jsonResponse(phase === "v1" ? watchlistV1 : watchlistV2);
+      if (url === "/api/sectors") {
+        return jsonResponse(phase === "v1" ? sectorsV1 : sectorsV2);
       }
       return jsonResponse({});
     });
 
     render(
       <>
-        <WatchlistReader id="reader-a" />
-        <WatchlistReader id="reader-b" />
+        <SectorsReader id="reader-a" />
+        <SectorsReader id="reader-b" />
       </>,
     );
 
@@ -187,10 +189,10 @@ describe("shared watchlist store (regression for #18)", () => {
 
     phase = "v2";
     await act(async () => {
-      await watchlistInternals.store.refresh();
+      await sectorsInternals.store.refresh();
     });
 
-    expect(screen.getByTestId("reader-a")).toHaveTextContent("tickers:AAPL,PYPL");
-    expect(screen.getByTestId("reader-b")).toHaveTextContent("tickers:AAPL,PYPL");
+    expect(screen.getByTestId("reader-a")).toHaveTextContent("tickers:AAPL,MSFT");
+    expect(screen.getByTestId("reader-b")).toHaveTextContent("tickers:AAPL,MSFT");
   });
 });

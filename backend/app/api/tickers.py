@@ -1,61 +1,58 @@
 """Ticker validation policy for the API layer.
 
-PLAN.md §6 "Ticker Validation":
-- Simulator path: ~50 well-known US large/mid-cap tickers. Unknown → reject.
-- Massive path: defer to upstream (a single price probe; 404 → reject).
+Validation diverges by data source per the redesign spec §5:
 
-In practice the market subsystem itself doesn't enforce an allowlist for
-the simulator (it silently seeds unknown tickers with a random price), so
-the gate lives here. Watchlist mutations and trade auto-add both call
-`validate_ticker_supported` before reaching the data source.
+- **Simulator path**: only the 60 tickers in the sector taxonomy
+  (`app.market.sectors.SECTOR_TICKER_SET`) are accepted. Anything else is
+  rejected with `ticker_unsupported`.
+- **Real-data paths (Finnhub, Massive)**: defer to upstream — `add_ticker`
+  either succeeds or the upstream source surfaces the rejection. The API
+  layer accepts any non-empty symbol.
+
+There is no longer a watchlist concept; the sector list is fixed at boot
+and only `add_ticker` for an off-list symbol can extend the active stream
+(used as a defensive fallback when the LLM trades a non-sector ticker).
 """
 
 from __future__ import annotations
 
 import os
 
-# A comfortable superset of the 10 default seed tickers — covers the major
-# US large-caps a user is likely to type. Spec calls for "~50".
-SUPPORTED_SIMULATOR_TICKERS: frozenset[str] = frozenset(
-    {
-        # Default watchlist (10)
-        "AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "NVDA", "META", "JPM", "V", "NFLX",
-        # Tech (additional)
-        "ORCL", "CRM", "ADBE", "INTC", "AMD", "CSCO", "IBM", "QCOM", "TXN", "AVGO",
-        "PYPL", "SHOP", "SQ", "UBER", "LYFT", "ABNB", "SNAP", "PINS", "ZM", "DOCU",
-        # Finance
-        "GS", "MS", "BAC", "WFC", "C", "MA", "AXP", "BRK.B", "BLK", "SCHW",
-        # Consumer / industrial / healthcare
-        "WMT", "HD", "DIS", "KO", "PEP", "MCD", "NKE", "SBUX", "TGT", "COST",
-        "JNJ", "PFE", "UNH", "MRK", "ABBV", "LLY", "TMO", "ABT",
-        "BA", "CAT", "GE", "F", "GM", "XOM", "CVX",
-    }
-)
+from app.market.sectors import SECTOR_TICKER_SET
+
+# Backwards-compat: the sector taxonomy is now the simulator allowlist.
+SUPPORTED_SIMULATOR_TICKERS: frozenset[str] = SECTOR_TICKER_SET
+
+
+def is_real_data_path() -> bool:
+    """True if a real-data provider is configured (Finnhub or Massive)."""
+    if os.environ.get("FINNHUB_API_KEY", "").strip():
+        return True
+    if os.environ.get("MASSIVE_API_KEY", "").strip():
+        return True
+    return False
 
 
 def is_massive_path() -> bool:
-    """True if MASSIVE_API_KEY is set and non-empty."""
+    """True if MASSIVE_API_KEY is set. Kept for backwards compat — prefer
+    `is_real_data_path` for new code."""
     return bool(os.environ.get("MASSIVE_API_KEY", "").strip())
 
 
 def validate_ticker_supported(ticker: str) -> None:
     """Raise `APIError(ticker_unsupported)` if the ticker isn't accepted.
 
-    On the simulator path: reject anything outside `SUPPORTED_SIMULATOR_TICKERS`.
-    On the Massive path: accept anything — the upstream API is the authority,
-    and `MassiveDataSource.add_ticker` succeeds eagerly (the next poll surfaces
-    rejection as missing data, not a hard error). For now we keep that
-    behavior and let the user discover bad tickers via empty prices.
+    Simulator path: must be in the sector taxonomy.
+    Real-data path: accept and let upstream validate.
     """
     from app.api.errors import ticker_unsupported
 
-    if is_massive_path():
+    if is_real_data_path():
         return
-    if ticker.upper() not in SUPPORTED_SIMULATOR_TICKERS:
+    if ticker.upper() not in SECTOR_TICKER_SET:
         raise ticker_unsupported(
-            f"Ticker {ticker!r} is not in the simulator allowlist. "
-            "Set MASSIVE_API_KEY for full coverage."
+            f"Ticker {ticker!r} is not in the sector taxonomy. "
+            "Set FINNHUB_API_KEY for full coverage."
         )
 
 
-WATCHLIST_LIMIT = 25

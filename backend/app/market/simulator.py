@@ -15,7 +15,10 @@ from .seed_prices import (
     CORRELATION_GROUPS,
     CROSS_GROUP_CORR,
     DEFAULT_PARAMS,
+    INTRA_CONSUMER_CORR,
+    INTRA_ENERGY_CORR,
     INTRA_FINANCE_CORR,
+    INTRA_HEALTHCARE_CORR,
     INTRA_TECH_CORR,
     SEED_PRICES,
     TICKER_PARAMS,
@@ -176,23 +179,31 @@ class GBMSimulator:
         """Determine correlation between two tickers based on sector grouping.
 
         Correlation structure:
-          - Same tech sector:   0.6
-          - Same finance sector: 0.5
-          - TSLA with anything: 0.3 (it does its own thing)
-          - Cross-sector:       0.3
-          - Unknown tickers:    0.3
+          - Same tech group:       0.6
+          - Same finance group:    0.5
+          - Same healthcare group: 0.45
+          - Same consumer group:   0.4
+          - Same energy group:     0.6
+          - TSLA with anything:    0.3 (it does its own thing)
+          - Cross-sector:          0.3
+          - Unknown tickers:       0.3
         """
-        tech = CORRELATION_GROUPS["tech"]
-        finance = CORRELATION_GROUPS["finance"]
-
-        # TSLA is in tech set but behaves independently
+        # TSLA is in the tech set but behaves independently.
         if t1 == "TSLA" or t2 == "TSLA":
             return TSLA_CORR
 
-        if t1 in tech and t2 in tech:
-            return INTRA_TECH_CORR
-        if t1 in finance and t2 in finance:
-            return INTRA_FINANCE_CORR
+        for group_name, members in CORRELATION_GROUPS.items():
+            if t1 in members and t2 in members:
+                if group_name == "tech":
+                    return INTRA_TECH_CORR
+                if group_name == "finance":
+                    return INTRA_FINANCE_CORR
+                if group_name == "healthcare":
+                    return INTRA_HEALTHCARE_CORR
+                if group_name == "consumer":
+                    return INTRA_CONSUMER_CORR
+                if group_name == "energy":
+                    return INTRA_ENERGY_CORR
 
         return CROSS_GROUP_CORR
 

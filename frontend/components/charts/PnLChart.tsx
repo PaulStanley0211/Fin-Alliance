@@ -13,6 +13,8 @@ import {
 
 import { api, ApiError } from "@/lib/api";
 import { usePortfolio } from "@/lib/portfolio";
+import { useTheme } from "@/lib/theme";
+import { getChartPalette } from "@/lib/themeColors";
 import type { HistoryRange, HistorySnapshot } from "@/lib/types";
 
 const RANGES: { key: HistoryRange; label: string }[] = [
@@ -40,6 +42,7 @@ export function PnLChart() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const { theme } = useTheme();
 
   // The empty-state condition is "no trades yet". Positions count is a clean
   // proxy: a fresh user has zero positions, so the snapshot line is trivially
@@ -71,22 +74,23 @@ export function PnLChart() {
   // Mount the chart once.
   useEffect(() => {
     if (!containerRef.current) return;
+    const palette = getChartPalette();
     const chart = createChart(containerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#a8b3c1",
+        textColor: palette.text,
         fontFamily:
           "JetBrains Mono, IBM Plex Mono, ui-monospace, Menlo, monospace",
         fontSize: 10,
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "rgba(34, 42, 56, 0.4)" },
-        horzLines: { color: "rgba(34, 42, 56, 0.4)" },
+        vertLines: { color: palette.grid },
+        horzLines: { color: palette.grid },
       },
-      rightPriceScale: { borderColor: "rgba(34, 42, 56, 0.7)" },
+      rightPriceScale: { borderColor: palette.border },
       timeScale: {
-        borderColor: "rgba(34, 42, 56, 0.7)",
+        borderColor: palette.border,
         timeVisible: true,
         secondsVisible: false,
       },
@@ -97,9 +101,9 @@ export function PnLChart() {
     });
 
     const series = chart.addSeries(AreaSeries, {
-      lineColor: "#ecad0a",
-      topColor: "rgba(236, 173, 10, 0.30)",
-      bottomColor: "rgba(236, 173, 10, 0)",
+      lineColor: palette.accent,
+      topColor: palette.accentAreaTop,
+      bottomColor: palette.accentAreaBottom,
       lineWidth: 2,
       priceFormat: { type: "price", precision: 2, minMove: 0.01 },
     });
@@ -113,6 +117,28 @@ export function PnLChart() {
       seriesRef.current = null;
     };
   }, []);
+
+  // Restyle on theme change without re-mounting the chart.
+  useEffect(() => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!chart || !series) return;
+    const palette = getChartPalette();
+    chart.applyOptions({
+      layout: { textColor: palette.text },
+      grid: {
+        vertLines: { color: palette.grid },
+        horzLines: { color: palette.grid },
+      },
+      rightPriceScale: { borderColor: palette.border },
+      timeScale: { borderColor: palette.border },
+    });
+    series.applyOptions({
+      lineColor: palette.accent,
+      topColor: palette.accentAreaTop,
+      bottomColor: palette.accentAreaBottom,
+    });
+  }, [theme]);
 
   // Seriously short-and-sweet — repaint when snapshots change.
   useEffect(() => {

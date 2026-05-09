@@ -1,18 +1,25 @@
 "use client";
 
+import { useMemo } from "react";
+
 import { PriceFlash } from "@/components/common/PriceFlash";
+import { useSectors } from "@/lib/sectors";
 import { useSelectedTicker } from "@/lib/selection";
 import { useSseState } from "@/lib/sse";
-import { useWatchlist } from "@/lib/watchlist";
 
 /**
- * Horizontal tape of every watched ticker. Click jumps the MainChart focus.
- * Pulls watch order from `/api/watchlist`; live values from the SSE store.
+ * Horizontal tape of every streaming ticker. Click jumps the MainChart focus.
+ * Pulls the ticker order from the sector taxonomy (`/api/sectors`); live
+ * values from the SSE store.
  */
 export function TickerStrip() {
-  const watchlist = useWatchlist();
+  const sectors = useSectors();
   const sse = useSseState();
   const [selected, setSelected] = useSelectedTicker();
+
+  const tickers = useMemo(() => {
+    return sectors.sectors.flatMap((s) => s.tickers);
+  }, [sectors.sectors]);
 
   return (
     <div
@@ -20,10 +27,10 @@ export function TickerStrip() {
       data-testid="ticker-strip"
     >
       <span className="eyebrow shrink-0">Tape</span>
-      {watchlist.tickers.length === 0 ? (
+      {tickers.length === 0 ? (
         <span className="font-mono text-2xs text-ink-3">no tickers</span>
       ) : (
-        watchlist.tickers.map((sym) => {
+        tickers.map((sym) => {
           const tick = sse.prices[sym];
           const change =
             tick && tick.previous_price !== 0

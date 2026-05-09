@@ -126,43 +126,52 @@ class TestTradeExecution:
 # --------------------------------------------------------------------------
 
 
+_WATCHLIST_DISABLED_MSG = (
+    "Watchlist actions are disabled now that all sectors stream by default."
+)
+
+
 class TestWatchlistChanges:
-    def test_watch_adds_ticker(self, client: TestClient) -> None:
+    """Spec §6 — watchlist removed. The mock still emits watchlist
+    actions through the model -> executor pipeline; the executor
+    short-circuits all of them with `watchlist_disabled`."""
+
+    def test_watch_rejected(self, client: TestClient) -> None:
         body = _post_chat(client, "watch PYPL")
-        assert body["message"] == "Added PYPL to your watchlist."
+        assert body["message"] == _WATCHLIST_DISABLED_MSG
         assert len(body["executed_watchlist_changes"]) == 1
         change = body["executed_watchlist_changes"][0]
         assert change == {
             "ticker": "PYPL",
             "action": "add",
-            "status": "executed",
-            "error": None,
+            "status": "rejected",
+            "error": "watchlist_disabled",
         }
-        wl = client.get("/api/watchlist").json()
-        assert any(t["ticker"] == "PYPL" for t in wl["tickers"])
 
-    def test_unwatch_removes_ticker(self, client: TestClient) -> None:
-        # AAPL is on the default watchlist already
+    def test_unwatch_rejected(self, client: TestClient) -> None:
         body = _post_chat(client, "unwatch AAPL")
         change = body["executed_watchlist_changes"][0]
-        assert change["status"] == "executed"
+        assert change["status"] == "rejected"
+        assert change["error"] == "watchlist_disabled"
         assert change["ticker"] == "AAPL"
         assert change["action"] == "remove"
-        wl = client.get("/api/watchlist").json()
-        assert not any(t["ticker"] == "AAPL" for t in wl["tickers"])
 
-    def test_remove_keyword(self, client: TestClient) -> None:
-        # "remove" is the alternative form per PLAN.md §9
+    def test_remove_keyword_rejected(self, client: TestClient) -> None:
         body = _post_chat(client, "remove GOOGL")
         change = body["executed_watchlist_changes"][0]
-        assert change["status"] == "executed"
+        assert change["status"] == "rejected"
+        assert change["error"] == "watchlist_disabled"
         assert change["action"] == "remove"
 
-    def test_watch_unsupported_ticker_rejected(self, client: TestClient) -> None:
+    def test_watch_unsupported_ticker_still_watchlist_disabled(
+        self, client: TestClient
+    ) -> None:
+        # We never reach ticker validation; the executor short-circuits
+        # before that.
         body = _post_chat(client, "watch ZZZZZ")
         change = body["executed_watchlist_changes"][0]
         assert change["status"] == "rejected"
-        assert change["error"] == "ticker_unsupported"
+        assert change["error"] == "watchlist_disabled"
 
 
 # --------------------------------------------------------------------------

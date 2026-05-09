@@ -81,6 +81,7 @@ ExecutionError = Literal[
     "insufficient_shares",
     "ticker_unsupported",
     "watchlist_full",
+    "watchlist_disabled",
     "price_unavailable",
     "invalid_quantity",
     "duplicate_request",

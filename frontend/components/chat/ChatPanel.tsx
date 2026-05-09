@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { usePortfolio } from "@/lib/portfolio";
-import { useWatchlist } from "@/lib/watchlist";
 import type {
   ChatResponseEnvelope,
   ExecutedTrade,
@@ -28,6 +27,7 @@ const ERROR_LABELS: Record<string, string> = {
   insufficient_shares: "insufficient shares",
   ticker_unsupported: "ticker not supported",
   watchlist_full: "watchlist full",
+  watchlist_disabled: "watchlist actions are disabled",
   invalid_quantity: "invalid quantity",
   internal_error: "internal error",
 };
@@ -50,7 +50,6 @@ export function ChatPanel() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const portfolio = usePortfolio();
-  const watchlist = useWatchlist();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll to the bottom when a new message lands.
@@ -88,12 +87,12 @@ export function ChatPanel() {
           error: envelope.error,
         },
       ]);
-      // If the LLM auto-executed anything, the rest of the app should reflect it.
-      const didAct =
-        envelope.executed_trades.length > 0 ||
-        envelope.executed_watchlist_changes.length > 0;
-      if (didAct) {
-        await Promise.all([portfolio.refresh(), watchlist.refresh()]);
+      // If the LLM auto-executed any trades, refresh the portfolio so the
+      // rest of the workstation reflects them. Watchlist changes are now
+      // short-circuited as `watchlist_disabled` server-side, so there's no
+      // sector taxonomy to refetch on a successful chat turn.
+      if (envelope.executed_trades.length > 0) {
+        await portfolio.refresh();
       }
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : (e as Error).message;
@@ -234,9 +233,13 @@ function ChatBubble({
           {message.actions.trades.map((t, i) => (
             <TradeReceipt key={`t-${i}`} trade={t} />
           ))}
-          {message.actions.watchlist_changes.map((w, i) => (
-            <WatchlistReceipt key={`w-${i}`} change={w} />
-          ))}
+          {message.actions.watchlist_changes.map((w, i) =>
+            w.status === "rejected" && w.error === "watchlist_disabled" ? (
+              <WatchlistDisabledNote key={`w-${i}`} index={i} />
+            ) : (
+              <WatchlistReceipt key={`w-${i}`} change={w} />
+            ),
+          )}
         </div>
       ) : null}
     </li>
@@ -267,6 +270,17 @@ function TradeReceipt({ trade }: { trade: ExecutedTrade }) {
           {ERROR_LABELS[trade.error] ?? trade.error}
         </span>
       ) : null}
+    </div>
+  );
+}
+
+function WatchlistDisabledNote({ index }: { index: number }) {
+  return (
+    <div
+      data-testid={`chat-watchlist-disabled-${index}`}
+      className="px-2 py-1 rounded-sharp font-mono text-2xs text-ink-3 italic"
+    >
+      watchlist actions are disabled
     </div>
   );
 }

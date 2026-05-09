@@ -38,8 +38,22 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      data-theme="dark"
       className={`${display.variable} ${sans.variable} ${mono.variable}`}
     >
+      <head>
+        {/*
+         * Inline hydration: read the saved preference (or prefers-color-scheme)
+         * and set <html data-theme="..."> synchronously, before any
+         * stylesheet resolves. Avoids a flash of dark theme on a
+         * light-preferring user.
+         */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var s=window.localStorage.getItem('finally:theme');var t=(s==='dark'||s==='light')?s:(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-screen antialiased">{children}</body>
     </html>
   );

@@ -1,5 +1,17 @@
 import type { Config } from "tailwindcss";
 
+/**
+ * All theme-sensitive colors are CSS variables defined in
+ * `app/globals.css` (under `:root[data-theme="dark"|"light"]`). Tailwind
+ * utilities consume the matching `--<name>-rgb` triplet via
+ * `rgb(var(--<name>-rgb) / <alpha-value>)`, which means opacity modifiers
+ * like `bg-bg-1/80`, `border-primary/40`, `text-up/30` keep working
+ * across themes.
+ */
+function token(name: string): string {
+  return `rgb(var(--${name}-rgb) / <alpha-value>)`;
+}
+
 const config: Config = {
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
@@ -9,58 +21,54 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Base canvas — never pure black
         bg: {
-          0: "#0d1117", // primary canvas
-          1: "#11161f", // panel
-          2: "#161c27", // raised
-          3: "#1a1a2e", // accent panel (per spec)
-          4: "#222a38", // subtle hover
+          0: token("bg-0"),
+          1: token("bg-1"),
+          2: token("bg-2"),
+          3: token("bg-3"),
+          4: token("bg-4"),
         },
         line: {
-          DEFAULT: "#222a38",
-          soft: "#1b2230",
-          strong: "#2d3a4e",
+          DEFAULT: token("line"),
+          soft: token("line-soft"),
+          strong: token("line-strong"),
         },
         ink: {
-          0: "#e6edf3", // primary text
-          1: "#a8b3c1", // secondary
-          2: "#6e7a8a", // tertiary / labels
-          3: "#4a5363", // muted
+          0: token("ink-0"),
+          1: token("ink-1"),
+          2: token("ink-2"),
+          3: token("ink-3"),
         },
-        // Brand
         accent: {
-          DEFAULT: "#ecad0a", // accent yellow
-          dim: "#b8870a",
-          glow: "#fbd34d",
+          DEFAULT: token("accent"),
+          dim: token("accent-dim"),
+          glow: token("accent-glow"),
         },
         primary: {
-          DEFAULT: "#209dd7", // blue primary
-          dim: "#1a7faf",
-          glow: "#62c2ee",
+          DEFAULT: token("primary"),
+          dim: token("primary-dim"),
+          glow: token("primary-glow"),
         },
         secondary: {
-          DEFAULT: "#753991", // purple secondary
-          dim: "#5a2c70",
-          glow: "#a060c0",
+          DEFAULT: token("secondary"),
+          dim: token("secondary-dim"),
+          glow: token("secondary-glow"),
         },
-        // Market signals
         up: {
-          DEFAULT: "#26d086",
-          dim: "#1a8857",
-          glow: "rgba(38, 208, 134, 0.18)",
+          DEFAULT: token("up"),
+          dim: token("up-dim"),
+          glow: token("up-glow"),
         },
         down: {
-          DEFAULT: "#f0506e",
-          dim: "#a3354b",
-          glow: "rgba(240, 80, 110, 0.18)",
+          DEFAULT: token("down"),
+          dim: token("down-dim"),
+          glow: token("down-glow"),
         },
         flat: {
-          DEFAULT: "#6e7a8a",
+          DEFAULT: token("flat"),
         },
       },
       fontFamily: {
-        // Distinctive type stack — not generic Inter
         display: [
           "var(--font-display)",
           "'Fraunces'",
@@ -100,8 +108,8 @@ const config: Config = {
       },
       boxShadow: {
         panel:
-          "0 0 0 1px rgba(34, 42, 56, 0.7), 0 1px 0 0 rgba(255, 255, 255, 0.02) inset",
-        glow: "0 0 24px rgba(32, 157, 215, 0.25)",
+          "0 0 0 1px rgb(var(--line-rgb) / 0.7), 0 1px 0 0 rgba(255, 255, 255, 0.02) inset",
+        glow: "0 0 24px rgb(var(--primary-rgb) / 0.25)",
       },
       transitionDuration: {
         flash: "500ms",
@@ -113,14 +121,8 @@ const config: Config = {
         "ticker-in": "ticker-in 220ms ease-out",
       },
       keyframes: {
-        "flash-up": {
-          "0%": { backgroundColor: "rgba(38, 208, 134, 0.32)" },
-          "100%": { backgroundColor: "transparent" },
-        },
-        "flash-down": {
-          "0%": { backgroundColor: "rgba(240, 80, 110, 0.32)" },
-          "100%": { backgroundColor: "transparent" },
-        },
+        // flash-up / flash-down keyframes live in globals.css so they can use
+        // CSS variables (theme-aware).
         "pulse-dot": {
           "0%, 100%": { opacity: "0.6" },
           "50%": { opacity: "1" },
@@ -132,7 +134,7 @@ const config: Config = {
       },
       backgroundImage: {
         "grid-faint":
-          "linear-gradient(to right, rgba(34, 42, 56, 0.35) 1px, transparent 1px), linear-gradient(to bottom, rgba(34, 42, 56, 0.35) 1px, transparent 1px)",
+          "linear-gradient(to right, rgb(var(--line-rgb) / 0.35) 1px, transparent 1px), linear-gradient(to bottom, rgb(var(--line-rgb) / 0.35) 1px, transparent 1px)",
         "scanline":
           "repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px)",
       },

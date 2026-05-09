@@ -1,9 +1,10 @@
 """Tests for the chat action executor.
 
 Covers:
-- Executed trades and watchlist changes (success path)
+- Executed trades (success path)
 - Per-error-code mapping for rejection (insufficient_cash, insufficient_shares,
-  ticker_unsupported, watchlist_full, price_unavailable)
+  ticker_unsupported, price_unavailable)
+- Watchlist changes are short-circuited with `watchlist_disabled` (spec §6)
 - Independence: one rejection does NOT abort the others
 - LLM-initiated trades skip request_id (no idempotency dedupe)
 """
@@ -94,8 +95,12 @@ class TestTradeExecution:
         assert trades[0].error == "price_unavailable"
 
 
-class TestWatchlistExecution:
-    async def test_add_executed(self, state) -> None:
+class TestWatchlistShortCircuit:
+    """Spec §6 — watchlist removed. The executor short-circuits any
+    `watchlist_changes` action emitted by the model with
+    `watchlist_disabled`, regardless of action or ticker validity."""
+
+    async def test_add_rejected_watchlist_disabled(self, state) -> None:
         resp = LLMResponse(
             message="ok",
             watchlist_changes=[WatchlistChange(ticker="PYPL", action="add")],
@@ -103,29 +108,52 @@ class TestWatchlistExecution:
         _, changes = await execute_actions(resp, state)
         assert len(changes) == 1
         c = changes[0]
-        assert c.status == "executed"
+        assert c.status == "rejected"
+        assert c.error == "watchlist_disabled"
         assert c.ticker == "PYPL"
         assert c.action == "add"
-        assert c.error is None
 
-    async def test_remove_executed(self, state) -> None:
-        # AAPL is on the default seed watchlist
+    async def test_remove_rejected_watchlist_disabled(self, state) -> None:
         resp = LLMResponse(
             message="ok",
             watchlist_changes=[WatchlistChange(ticker="AAPL", action="remove")],
         )
         _, changes = await execute_actions(resp, state)
-        assert changes[0].status == "executed"
+        assert changes[0].status == "rejected"
+        assert changes[0].error == "watchlist_disabled"
         assert changes[0].action == "remove"
 
-    async def test_unsupported_add_rejected(self, state) -> None:
+    async def test_unsupported_ticker_still_watchlist_disabled(self, state) -> None:
+        """Even an obviously-invalid ticker rejects with watchlist_disabled
+        rather than ticker_unsupported — we never call into ticker validation."""
         resp = LLMResponse(
             message="ok",
             watchlist_changes=[WatchlistChange(ticker="ZZZZZ", action="add")],
         )
         _, changes = await execute_actions(resp, state)
         assert changes[0].status == "rejected"
-        assert changes[0].error == "ticker_unsupported"
+        assert changes[0].error == "watchlist_disabled"
+
+    async def test_does_not_call_watchlist_module(self, state, monkeypatch) -> None:
+        """Belt-and-braces — the executor must not import or invoke the
+        (now-removed) watchlist service. We sanity-check by inserting a
+        sentinel into sys.modules: if anything tries to import it, fail."""
+        import sys
+
+        class Boom:
+            def __getattr__(self, name):
+                raise AssertionError(
+                    f"executor must not access app.api.watchlist (asked for {name!r})"
+                )
+
+        monkeypatch.setitem(sys.modules, "app.api.watchlist", Boom())
+
+        resp = LLMResponse(
+            message="ok",
+            watchlist_changes=[WatchlistChange(ticker="PYPL", action="add")],
+        )
+        _, changes = await execute_actions(resp, state)
+        assert changes[0].error == "watchlist_disabled"
 
 
 class TestIndependence:
@@ -141,13 +169,15 @@ class TestIndependence:
                 TradeRequest(ticker="AAPL", side="buy", quantity=2),  # ok
             ],
             watchlist_changes=[
-                WatchlistChange(ticker="ZZZZZ", action="add"),  # rejected
-                WatchlistChange(ticker="PYPL", action="add"),  # ok
+                # Both rejected with watchlist_disabled — watchlist removed in §6.
+                WatchlistChange(ticker="ZZZZZ", action="add"),
+                WatchlistChange(ticker="PYPL", action="add"),
             ],
         )
         trades, changes = await execute_actions(resp, state)
         assert [t.status for t in trades] == ["executed", "rejected", "executed"]
-        assert [c.status for c in changes] == ["rejected", "executed"]
+        assert [c.status for c in changes] == ["rejected", "rejected"]
+        assert [c.error for c in changes] == ["watchlist_disabled", "watchlist_disabled"]
 
     async def test_returns_lists_in_emission_order(
         self, state, seed_price

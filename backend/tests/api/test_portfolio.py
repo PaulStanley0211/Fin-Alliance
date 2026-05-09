@@ -142,19 +142,18 @@ def test_trade_idempotency(client: TestClient) -> None:
     assert portfolio["cash_balance"] == 10000.0 - 5 * 200.0
 
 
-def test_trade_auto_adds_to_watchlist(client: TestClient) -> None:
-    """Buying a ticker that isn't on the watchlist should add it."""
-    _seed_price("PYPL", 60.00)  # PYPL is not in default watchlist
+def test_trade_sector_ticker_succeeds(client: TestClient) -> None:
+    """Buying a sector ticker fills against the pre-subscribed cache."""
+    _seed_price("LLY", 920.00)  # Healthcare sector ticker
     resp = client.post(
         "/api/portfolio/trade",
-        json={"ticker": "PYPL", "quantity": 1, "side": "buy"},
+        json={"ticker": "LLY", "quantity": 1, "side": "buy"},
     )
     assert resp.status_code == 200, resp.text
-    listed = [e["ticker"] for e in client.get("/api/watchlist").json()["tickers"]]
-    assert "PYPL" in listed
 
 
 def test_trade_unsupported_ticker_rejected(client: TestClient) -> None:
+    """On the simulator path, a non-sector ticker is rejected."""
     resp = client.post(
         "/api/portfolio/trade",
         json={"ticker": "XYZQ", "quantity": 1, "side": "buy"},

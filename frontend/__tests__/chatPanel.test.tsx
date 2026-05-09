@@ -3,13 +3,11 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { __internals as portfolioInternals } from "@/lib/portfolio";
-import { __internals as watchlistInternals } from "@/lib/watchlist";
 
 const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   portfolioInternals.store.__reset();
-  watchlistInternals.store.__reset();
 });
 
 afterEach(() => {
@@ -47,7 +45,6 @@ const portfolioPayload = {
   total_value: 10_000,
   realized_pnl: 0,
 };
-const watchlistPayload = { tickers: [] };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -58,7 +55,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const baseRouting = ({ url }: Capture) => {
   if (url === "/api/portfolio") return jsonResponse(portfolioPayload);
-  if (url === "/api/watchlist") return jsonResponse(watchlistPayload);
   return jsonResponse({ error: "not_found", message: "x" }, 404);
 };
 
@@ -69,8 +65,8 @@ describe("ChatPanel", () => {
     expect(screen.getByText(/ask finally anything/i)).toBeInTheDocument();
     const send = screen.getByTestId("chat-send") as HTMLButtonElement;
     expect(send.disabled).toBe(true);
-    // Allow the portfolio + watchlist initial fetches to flush so React's
-    // act() warning doesn't fire on subsequent state updates.
+    // Allow the portfolio initial fetch to flush so React's act() warning
+    // doesn't fire on subsequent state updates.
     await waitFor(() =>
       expect(screen.getByTestId("chat-input")).toBeInTheDocument(),
     );
@@ -127,11 +123,11 @@ describe("ChatPanel", () => {
     expect(flat).toHaveTextContent(/Your cash balance is \$10,000\./);
   });
 
-  it("renders inline trade and watchlist receipts with status testids", async () => {
+  it("renders inline trade receipts and watchlist_disabled notes with the right testids", async () => {
     mockFetch((call) => {
       if (call.url === "/api/chat") {
         return jsonResponse({
-          message: "Bought 10 NVDA and added PYPL to your watchlist.",
+          message: "Bought 10 NVDA. Watchlist actions are disabled now.",
           executed_trades: [
             {
               ticker: "NVDA",
@@ -154,8 +150,8 @@ describe("ChatPanel", () => {
             {
               ticker: "PYPL",
               action: "add",
-              status: "executed",
-              error: null,
+              status: "rejected",
+              error: "watchlist_disabled",
             },
           ],
           error: null,
@@ -176,10 +172,15 @@ describe("ChatPanel", () => {
 
     expect(screen.getByTestId("chat-action-trade-NVDA").dataset.status).toBe("executed");
     expect(screen.getByTestId("chat-action-trade-BRK").dataset.status).toBe("rejected");
-    expect(screen.getByTestId("chat-action-watchlist-PYPL").dataset.status).toBe("executed");
-
     expect(screen.getByTestId("chat-action-trade-NVDA")).toHaveTextContent(/800\.50/);
     expect(screen.getByTestId("chat-action-trade-BRK")).toHaveTextContent(/ticker not supported/i);
+
+    // watchlist_disabled rejections render as a muted note, not a red error chip.
+    expect(screen.queryByTestId("chat-action-watchlist-PYPL")).toBeNull();
+    const note = screen.getByTestId("chat-watchlist-disabled-0");
+    expect(note).toHaveTextContent(/watchlist actions are disabled/i);
+    // Should NOT carry the red error chip styling (no down/down border).
+    expect(note.className).not.toMatch(/border-down/);
   });
 
   it("disables the input + send button while a request is in flight", async () => {

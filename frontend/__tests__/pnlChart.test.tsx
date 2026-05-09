@@ -11,6 +11,7 @@ vi.mock("lightweight-charts", () => {
   };
   const chart = {
     addSeries: vi.fn(() => series),
+    applyOptions: vi.fn(),
     remove: vi.fn(),
   };
   return {

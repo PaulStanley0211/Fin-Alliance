@@ -122,11 +122,18 @@ describe("api client", () => {
     expect(calls[0].url).toBe("/api/portfolio/history?range=1w");
   });
 
-  it("DELETEs /api/watchlist/{ticker} with 204 No Content", async () => {
-    const calls = mockFetch(() => new Response(null, { status: 204 }));
-    await expect(api.removeFromWatchlist("aapl")).resolves.toBeUndefined();
-    expect(calls[0].method).toBe("DELETE");
-    expect(calls[0].url).toBe("/api/watchlist/AAPL");
+  it("GETs /api/sectors and returns the typed shape", async () => {
+    const calls = mockFetch(() =>
+      jsonResponse({
+        version: "1.1",
+        sectors: [{ id: "technology", label: "Technology", tickers: ["AAPL"] }],
+      }),
+    );
+    const res = await api.getSectors();
+    expect(calls[0].url).toBe("/api/sectors");
+    expect(calls[0].method).toBe("GET");
+    expect(res.version).toBe("1.1");
+    expect(res.sectors[0].id).toBe("technology");
   });
 
   it("throws ApiError carrying code + message on 4xx", async () => {

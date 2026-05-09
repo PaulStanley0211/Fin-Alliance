@@ -19,6 +19,13 @@ from app import main as main_module
 from app.state import reset_state_for_tests
 
 
+@pytest.fixture(autouse=True)
+def isolate_real_data_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests run on the simulator path — strip real-data API keys."""
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+
+
 @pytest.fixture
 def db_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolated SQLite path via FINALLY_DB_PATH."""

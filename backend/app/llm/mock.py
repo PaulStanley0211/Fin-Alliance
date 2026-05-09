@@ -1,16 +1,20 @@
 """Deterministic mock LLM (PLAN.md §9 LLM Mock Mode).
 
-Used when LLM_MOCK=true. Implements the six-row regex dispatch table verbatim
-— this is a public contract with the E2E test suite. Patterns are evaluated
-in order; first match wins.
+Used when LLM_MOCK=true. Implements the six-row regex dispatch table.
+Patterns are evaluated in order; first match wins.
+
+Spec §6 update: the watchlist concept was removed. The `watch` / `unwatch`
+branches still emit a `watchlist_changes` action so the executor's rejection
+path is exercised end-to-end, but the message text honestly tells the user
+that watchlist actions are disabled.
 
 | pattern                                       | response                                                |
 | --------------------------------------------- | ------------------------------------------------------- |
 | ^\\s*$ OR ^(hi|hello|hey)\\b                  | greeting                                                |
 | \\bbuy\\s+(\\d+(?:\\.\\d+)?)\\s+([A-Z]{1,5})\\b | trade buy                                              |
 | \\bsell\\s+(\\d+(?:\\.\\d+)?)\\s+([A-Z]{1,5})\\b | trade sell                                             |
-| \\bwatch\\s+([A-Z]{1,5})\\b                   | watchlist add                                           |
-| \\b(unwatch|remove)\\s+([A-Z]{1,5})\\b        | watchlist remove                                        |
+| \\bwatch\\s+([A-Z]{1,5})\\b                   | watchlist add (executor rejects with watchlist_disabled) |
+| \\b(unwatch|remove)\\s+([A-Z]{1,5})\\b        | watchlist remove (executor rejects with watchlist_disabled) |
 | anything else                                 | "Mock response: I received '{user_message}'."           |
 """
 
@@ -66,7 +70,7 @@ def mock_llm(user_message: str) -> LLMResponse:
     if m:
         ticker = m.group(1).upper()
         return LLMResponse(
-            message=f"Added {ticker} to your watchlist.",
+            message="Watchlist actions are disabled now that all sectors stream by default.",
             trades=[],
             watchlist_changes=[WatchlistChange(ticker=ticker, action="add")],
         )
@@ -75,7 +79,7 @@ def mock_llm(user_message: str) -> LLMResponse:
     if m:
         ticker = m.group(1).upper()
         return LLMResponse(
-            message=f"Removed {ticker} from your watchlist.",
+            message="Watchlist actions are disabled now that all sectors stream by default.",
             trades=[],
             watchlist_changes=[WatchlistChange(ticker=ticker, action="remove")],
         )

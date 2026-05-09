@@ -5,6 +5,28 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 
+class UnsupportedTickerError(ValueError):
+    """Raised by `add_ticker` when the data source rejects the ticker.
+
+    The simulator allowlists 60 sector tickers; Finnhub rejects symbols it
+    does not recognize. The API layer translates this into HTTP 400 with
+    error code `ticker_unsupported`.
+    """
+
+    def __init__(self, ticker: str, reason: str = "ticker_unsupported") -> None:
+        super().__init__(f"{reason}: {ticker}")
+        self.ticker = ticker
+        self.reason = reason
+
+
+class MarketDataAuthError(RuntimeError):
+    """Raised by `start` when the data source's API key is rejected.
+
+    The factory uses this to decide whether to fall back to the simulator
+    when a primary source can't authenticate at boot.
+    """
+
+
 class MarketDataSource(ABC):
     """Contract for market data providers.
 
