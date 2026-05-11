@@ -8,13 +8,11 @@ import { useSseState } from "@/lib/sse";
 import type { MarketStatus } from "@/lib/types";
 
 /**
- * Portfolio heatmap — treemap of positions sized by portfolio weight, with
- * a deliberately subdued red/green treatment per spec §9:
- *
- *  - Cell surface is the neutral panel color (no flooded green/red).
- *  - P&L direction shown by a 2px left-edge rail (up / down / flat).
- *  - P&L magnitude shown by a small inline tinted percentage label.
- *  - Hover lifts the cell with a soft surface change + tooltip.
+ * Portfolio heatmap — Finviz-style treemap. Cells are sized by portfolio
+ * weight and flood-filled green/red, with tint intensity scaled by
+ * |unrealized P&L %| so a +0.2% mover reads as a soft green and a +5%
+ * mover reads as a vivid green. Direction is also kept on a hidden rail
+ * element for backwards-compatibility with E2E selectors.
  *
  * Layout: a squarified-style treemap on a single row of "strips" (greedy
  * row-packing) — simpler than the full Bruls algorithm but visually similar
@@ -22,6 +20,13 @@ import type { MarketStatus } from "@/lib/types";
  * tracks its own size via a ResizeObserver, so the treemap reflows as the
  * panel resizes.
  */
+
+// Map |pnl %| → background alpha. 0% (flat handled separately) starts at a
+// visible base so a tiny mover still reads as colored, and saturates at 5%.
+const TINT_BASE_ALPHA = 0.22;
+const TINT_PER_PERCENT = 0.13;
+const TINT_MAX_ALPHA = 0.88;
+const TINT_PERCENT_CAP = 5;
 
 interface Cell {
   ticker: string;
@@ -178,19 +183,19 @@ function HeatmapCell({
 }) {
   const [hovered, setHovered] = useState(false);
 
-  const railColor =
+  const pct = cell.unrealizedPnlPercent;
+  const intensity = Math.min(Math.abs(pct), TINT_PERCENT_CAP);
+  const tintAlpha = Math.min(
+    TINT_MAX_ALPHA,
+    TINT_BASE_ALPHA + intensity * TINT_PER_PERCENT,
+  );
+  const tintVar =
     cell.direction === "up"
-      ? "bg-up/70"
+      ? "--up-rgb"
       : cell.direction === "down"
-      ? "bg-down/70"
-      : "bg-line-strong";
-
-  const pnlText =
-    cell.direction === "up"
-      ? "text-up"
-      : cell.direction === "down"
-      ? "text-down"
-      : "text-ink-2";
+      ? "--down-rgb"
+      : null;
+  const tintColor = tintVar ? `rgba(var(${tintVar}), ${tintAlpha})` : undefined;
 
   const tooSmallForLabels = rect.w < 56 || rect.h < 36;
   const tooSmallForTicker = rect.w < 32 || rect.h < 22;
@@ -216,45 +221,49 @@ function HeatmapCell({
         top: rect.y,
         width: Math.max(0, rect.w - 4),
         height: Math.max(0, rect.h - 4),
+        backgroundColor: tintColor,
       }}
-      className={`group cursor-pointer overflow-hidden rounded-sharp border bg-bg-1 transition-colors
-        ${selected ? "border-primary/60" : "border-line-soft hover:border-line-strong hover:bg-bg-2"}`}
+      className={`group cursor-pointer overflow-hidden rounded-sharp border transition-shadow
+        ${cell.direction === "flat" ? "bg-bg-1" : ""}
+        ${selected ? "border-primary ring-1 ring-primary/40" : "border-line-soft hover:border-line-strong"}
+        hover:brightness-110`}
       data-testid={`heatmap-cell-${cell.ticker}`}
       data-direction={cell.direction}
       data-selected={selected || undefined}
-      aria-label={`${cell.ticker} · ${cell.unrealizedPnlPercent.toFixed(2)}%`}
+      aria-label={`${cell.ticker} · ${pct.toFixed(2)}%`}
       aria-pressed={selected}
     >
-      {/* Left-edge rail */}
+      {/* Direction rail kept in the DOM for testid/a11y hooks; no longer
+          visible because the flood fill conveys direction. */}
       <div
-        className={`absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-full ${railColor}`}
+        className="sr-only"
         data-testid={`heatmap-cell-rail-${cell.ticker}`}
         data-direction={cell.direction}
         aria-hidden="true"
       />
 
       {/* Cell content */}
-      <div className="absolute inset-0 pl-2 pr-1.5 py-1.5 flex flex-col justify-between">
+      <div className="absolute inset-0 px-2 py-1.5 flex flex-col justify-between">
         {!tooSmallForTicker ? (
-          <span className="font-mono text-tabular font-medium tracking-terminal text-ink-0 leading-none truncate">
+          <span className="font-mono text-tabular font-semibold tracking-terminal text-ink-0 leading-none truncate drop-shadow-[0_1px_0_rgba(0,0,0,0.18)]">
             {cell.ticker}
           </span>
         ) : null}
         {!tooSmallForLabels ? (
           <span
-            className={`font-mono text-2xs tabular leading-none ${pnlText}`}
+            className="font-mono text-2xs tabular leading-none text-ink-0 drop-shadow-[0_1px_0_rgba(0,0,0,0.18)]"
             data-testid={`heatmap-cell-pnl-${cell.ticker}`}
           >
-            {cell.unrealizedPnlPercent >= 0 ? "+" : ""}
-            {cell.unrealizedPnlPercent.toFixed(2)}%
+            {pct >= 0 ? "+" : ""}
+            {pct.toFixed(2)}%
           </span>
         ) : (
           <span
             data-testid={`heatmap-cell-pnl-${cell.ticker}`}
             className="sr-only"
           >
-            {cell.unrealizedPnlPercent >= 0 ? "+" : ""}
-            {cell.unrealizedPnlPercent.toFixed(2)}%
+            {pct >= 0 ? "+" : ""}
+            {pct.toFixed(2)}%
           </span>
         )}
       </div>
